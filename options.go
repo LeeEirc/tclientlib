@@ -4,31 +4,31 @@ import (
 	"bytes"
 )
 
-type packet struct {
+type optionPacket struct {
 	optionCode  byte
 	commandCode byte
-	subOption   *subOption
+	subOption   *subOptionPacket
 }
 
-func (p *packet) generatePacket() []byte {
+func (p *optionPacket) Bytes() []byte {
 	var buf bytes.Buffer
 	buf.WriteByte(IAC)
 	buf.WriteByte(p.optionCode)
 	buf.WriteByte(p.commandCode)
 	if p.subOption != nil {
-		buf.Write(p.subOption.subPacket())
+		buf.Write(p.subOption.Bytes())
 		buf.WriteByte(IAC)
 		buf.WriteByte(SE)
 	}
 	return buf.Bytes()
 }
 
-type subOption struct {
+type subOptionPacket struct {
 	subCommand byte
 	options    []byte
 }
 
-func (s *subOption) subPacket() []byte {
+func (s *subOptionPacket) Bytes() []byte {
 	if s.subCommand == IAC {
 		return s.options
 	}

@@ -4,7 +4,6 @@ import (
 	"flag"
 	"log"
 	"net"
-	"sync"
 	"unicode"
 
 	"github.com/LeeEirc/tclientlib"
@@ -13,8 +12,6 @@ import (
 var (
 	IpAddr string
 	Port   string
-
-	mux sync.Mutex
 )
 
 func init() {
@@ -44,41 +41,57 @@ func main() {
 }
 
 func handler(con net.Conn) {
+	defer con.Close()
 	addr := net.JoinHostPort(IpAddr, Port)
 	dstCon, err := net.Dial("tcp", addr)
 	if err != nil {
+		log.Println(err)
 		return
 	}
 	defer dstCon.Close()
-
+	srvChan := make(chan []byte)
+	clientChan := make(chan []byte)
+	done := make(chan struct{}, 2)
 	go func() {
 		readBuf := make([]byte, 1024)
-
 		for {
 			nr, err := dstCon.Read(readBuf)
 			if err != nil {
 				log.Println(err)
 				break
 			}
-			mux.Lock()
-			log.Println("server send: ", ConvertHumanText(readBuf[:nr]))
-			_, _ = con.Write(readBuf[:nr])
-			mux.Unlock()
+			srvChan <- readBuf[:nr]
+
 		}
-		_ = con.Close()
+		done <- struct{}{}
+		log.Println("close dstCon")
 	}()
 
-	writeBuf := make([]byte, 1024)
-	for {
-		wr, err := con.Read(writeBuf)
-		if err != nil {
-			log.Println(err)
-			break
+	go func() {
+		writeBuf := make([]byte, 1024)
+		for {
+			wr, err := con.Read(writeBuf)
+			if err != nil {
+				log.Println(err)
+				break
+			}
+			clientChan <- writeBuf[:wr]
 		}
-		mux.Lock()
-		log.Println("client send: ", ConvertHumanText(writeBuf[:wr]))
-		_, _ = dstCon.Write(writeBuf[:wr])
-		mux.Unlock()
+		done <- struct{}{}
+		log.Println("close con")
+	}()
+
+	for {
+		select {
+		case <-done:
+			return
+		case p := <-srvChan:
+			log.Println("server send: ", ConvertHumanText(p))
+			_, _ = con.Write(p)
+		case p := <-clientChan:
+			log.Println("client send: ", ConvertHumanText(p))
+			_, _ = dstCon.Write(p)
+		}
 	}
 }
 

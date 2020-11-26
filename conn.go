@@ -26,8 +26,8 @@ type Client struct {
 }
 
 func (c *Client) clientHandshake() error {
-	echoPacket := packet{optionCode: DO, commandCode: ECHO}
-	SGAPacket := packet{optionCode: DO, commandCode: SGA}
+	echoPacket := optionPacket{optionCode: DO, commandCode: ECHO}
+	SGAPacket := optionPacket{optionCode: DO, commandCode: SGA}
 	_ = c.replyOptionPacket(SGAPacket)
 	_ = c.replyOptionPacket(echoPacket)
 	for {
@@ -51,7 +51,7 @@ func (c *Client) clientHandshake() error {
 }
 
 func (c *Client) handleOption(option []byte) {
-	var p packet
+	var p optionPacket
 	log.Printf("Telnet server %s %s\n", CodeTOASCII[option[1]], CodeTOASCII[option[2]])
 	p.optionCode = option[1]
 	cmd := option[2]
@@ -62,7 +62,7 @@ func (c *Client) handleOption(option []byte) {
 		case OLD_ENVIRON, NEW_ENVIRON:
 			switch option[3] {
 			case 1: // send command
-				sub := subOption{subCommand: 0, options: make([]byte, 0)}
+				sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
 				sub.options = append(sub.options, 3)
 				sub.options = append(sub.options, []byte(c.conf.User)...)
 				p.subOption = &sub
@@ -74,12 +74,12 @@ func (c *Client) handleOption(option []byte) {
 		case TTYPE:
 			switch option[3] {
 			case 1: // send command
-				sub := subOption{subCommand: 0, options: make([]byte, 0)}
+				sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
 				sub.options = append(sub.options, []byte(c.conf.TTYOptions.Xterm)...)
 				p.subOption = &sub
 			}
 		case NAWS:
-			sub := subOption{subCommand: IAC, options: make([]byte, 0)}
+			sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
 			sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
 				0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
 			p.subOption = &sub
@@ -145,6 +145,7 @@ func (c *Client) login() error {
 
 func (c *Client) handleLoginData(data []byte) AuthStatus {
 	if incorrectPattern.Match(data) {
+		log.Printf("incorrect pattern match:%s \n", data)
 		return AuthFailed
 	} else if usernamePattern.Match(data) {
 		_, _ = c.sock.Write([]byte(c.conf.User + "\r\n"))
@@ -164,6 +165,7 @@ func (c *Client) handleLoginData(data []byte) AuthStatus {
 			return AuthSuccess
 		}
 	}
+	log.Printf("unmatch data: %s \n", data)
 	return AuthPartial
 }
 
@@ -199,8 +201,8 @@ func (c *Client) readOptionPacket() ([]byte, error) {
 	return p, nil
 }
 
-func (c *Client) replyOptionPacket(p packet) error {
-	_, err := c.sock.Write(p.generatePacket())
+func (c *Client) replyOptionPacket(p optionPacket) error {
+	_, err := c.sock.Write(p.Bytes())
 	return err
 }
 
@@ -220,10 +222,10 @@ func (c *Client) WindowChange(w, h int) error {
 	if !c.enableWindows {
 		return nil
 	}
-	var p packet
+	var p optionPacket
 	p.optionCode = SB
 	p.commandCode = NAWS
-	sub := subOption{subCommand: IAC, options: make([]byte, 0)}
+	sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
 	sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
 		c.conf.TTYOptions.Wide, w, c.conf.TTYOptions.High, h))...)
 	p.subOption = &sub
