@@ -2,38 +2,64 @@ package tclientlib
 
 import (
 	"bytes"
+	"fmt"
+	"log"
+	"strings"
 )
 
-type optionPacket struct {
-	optionCode  byte
-	commandCode byte
-	subOption   *subOptionPacket
+type OptionPacket struct {
+	OptionCode  byte
+	CommandCode byte
+	Parameters  []byte // SB parameters
 }
 
-func (p *optionPacket) Bytes() []byte {
+func (p *OptionPacket) Bytes() []byte {
 	var buf bytes.Buffer
 	buf.WriteByte(IAC)
-	buf.WriteByte(p.optionCode)
-	buf.WriteByte(p.commandCode)
-	if p.subOption != nil {
-		buf.Write(p.subOption.Bytes())
+	buf.WriteByte(p.OptionCode)
+	buf.WriteByte(p.CommandCode)
+	if p.Parameters != nil {
+		buf.Write(p.Parameters)
 		buf.WriteByte(IAC)
 		buf.WriteByte(SE)
 	}
 	return buf.Bytes()
 }
 
-type subOptionPacket struct {
-	subCommand byte
-	options    []byte
+func (p OptionPacket) String() string {
+	var builder strings.Builder
+	_, _ = builder.WriteString(fmt.Sprintf("IAC %s %s",
+		CodeTOASCII[p.OptionCode],
+		CodeTOASCII[p.CommandCode]))
+	if p.Parameters != nil {
+		builder.WriteString(" ")
+		builder.WriteString(ConvertSubOptions(p.CommandCode, p.Parameters))
+		builder.WriteString(" ")
+		builder.WriteString("IAC SE")
+	}
+	return builder.String()
+
 }
 
-func (s *subOptionPacket) Bytes() []byte {
-	if s.subCommand == IAC {
-		return s.options
+func ConvertSubOptions(commandCode byte, parameters []byte) string {
+	switch commandCode {
+	case NAWS:
+		// NAWS (Negotiate About Window Size)
+		if len(parameters) != 4 {
+			log.Panic("parameters should 4\n")
+		}
+		return fmt.Sprintf("%d %d %d %d",
+			parameters[0],
+			parameters[1],
+			parameters[2],
+			parameters[3],
+		)
+	default:
+		var builder strings.Builder
+		for i := range parameters {
+			builder.WriteString(fmt.Sprintf("%q", parameters[i]))
+			builder.WriteString(" ")
+		}
+		return builder.String()
 	}
-	cp := make([]byte, len(s.options)+1)
-	copy(cp, []byte{s.subCommand})
-	copy(cp[1:], s.options)
-	return cp
 }

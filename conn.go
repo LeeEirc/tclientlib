@@ -26,8 +26,8 @@ type Client struct {
 }
 
 func (c *Client) clientHandshake() error {
-	echoPacket := optionPacket{optionCode: DO, commandCode: ECHO}
-	SGAPacket := optionPacket{optionCode: DO, commandCode: SGA}
+	echoPacket := OptionPacket{OptionCode: DO, CommandCode: ECHO}
+	SGAPacket := OptionPacket{OptionCode: DO, CommandCode: SGA}
 	_ = c.replyOptionPacket(SGAPacket)
 	_ = c.replyOptionPacket(echoPacket)
 	for {
@@ -51,72 +51,72 @@ func (c *Client) clientHandshake() error {
 }
 
 func (c *Client) handleOption(option []byte) {
-	var p optionPacket
+	var p OptionPacket
 	log.Printf("Telnet server %s %s\n", CodeTOASCII[option[1]], CodeTOASCII[option[2]])
-	p.optionCode = option[1]
+	p.OptionCode = option[1]
 	cmd := option[2]
-	p.commandCode = cmd
+	p.CommandCode = cmd
 	switch option[1] {
 	case SB:
 		switch cmd {
 		case OLD_ENVIRON, NEW_ENVIRON:
-			switch option[3] {
-			case 1: // send command
-				sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
-				sub.options = append(sub.options, 3)
-				sub.options = append(sub.options, []byte(c.conf.User)...)
-				p.subOption = &sub
-			}
-			// subCommand 0 is , 1 Send , 2 INFO
-			// VALUE     1
-			// ESC       2
-			// USERVAR   3
-		case TTYPE:
-			switch option[3] {
-			case 1: // send command
-				sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
-				sub.options = append(sub.options, []byte(c.conf.TTYOptions.Xterm)...)
-				p.subOption = &sub
-			}
-		case NAWS:
-			sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
-			sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
-				0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
-			p.subOption = &sub
-		default:
-			return
-
+		//	switch option[3] {
+		//	case 1: // send command
+		//		sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
+		//		sub.options = append(sub.options, 3)
+		//		sub.options = append(sub.options, []byte(c.conf.User)...)
+		//		p.Parameters = &sub
+		//	}
+		//	// subCommand 0 is , 1 Send , 2 INFO
+		//	// VALUE     1
+		//	// ESC       2
+		//	// USERVAR   3
+		//case TTYPE:
+		//	switch option[3] {
+		//	case 1: // send command
+		//		sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
+		//		sub.options = append(sub.options, []byte(c.conf.TTYOptions.Xterm)...)
+		//		p.Parameters = &sub
+		//	}
+		//case NAWS:
+		//	sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
+		//	sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
+		//		0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
+		//	p.Parameters = &sub
+		//default:
+		//	return
+		//
 		}
 	default:
 		switch option[1] {
 		case DO:
 			switch option[2] {
 			case ECHO:
-				p.optionCode = WONT
+				p.OptionCode = WONT
 			case TTYPE, NEW_ENVIRON:
-				p.optionCode = WILL
+				p.OptionCode = WILL
 			case NAWS:
-				p.optionCode = WILL
+				p.OptionCode = WILL
 				c.enableWindows = true
 			default:
-				p.optionCode = WONT
+				p.OptionCode = WONT
 			}
 		case WILL:
 			switch option[2] {
 			case ECHO:
-				p.optionCode = DO
+				p.OptionCode = DO
 			case SGA:
-				p.optionCode = DO
+				p.OptionCode = DO
 			default:
-				p.optionCode = DONT
+				p.OptionCode = DONT
 			}
 		case DONT:
-			p.optionCode = WONT
+			p.OptionCode = WONT
 		case WONT:
-			p.optionCode = DONT
+			p.OptionCode = DONT
 		}
 	}
-	log.Printf("Telnet client %s %s\n", CodeTOASCII[p.optionCode], CodeTOASCII[p.commandCode])
+	log.Printf("Telnet client %s %s\n", CodeTOASCII[p.OptionCode], CodeTOASCII[p.CommandCode])
 	if err := c.replyOptionPacket(p); err != nil {
 		log.Println("Telnet handler option err: ", err)
 	}
@@ -201,7 +201,7 @@ func (c *Client) readOptionPacket() ([]byte, error) {
 	return p, nil
 }
 
-func (c *Client) replyOptionPacket(p optionPacket) error {
+func (c *Client) replyOptionPacket(p OptionPacket) error {
 	_, err := c.sock.Write(p.Bytes())
 	return err
 }
@@ -222,13 +222,13 @@ func (c *Client) WindowChange(w, h int) error {
 	if !c.enableWindows {
 		return nil
 	}
-	var p optionPacket
-	p.optionCode = SB
-	p.commandCode = NAWS
-	sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
-	sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
-		c.conf.TTYOptions.Wide, w, c.conf.TTYOptions.High, h))...)
-	p.subOption = &sub
+	var p OptionPacket
+	p.OptionCode = SB
+	p.CommandCode = NAWS
+	//sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
+	//sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
+	//	c.conf.TTYOptions.Wide, w, c.conf.TTYOptions.High, h))...)
+	//p.Parameters = &sub
 	if err := c.replyOptionPacket(p); err != nil {
 		return err
 	}

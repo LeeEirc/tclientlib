@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/LeeEirc/tclientlib"
 )
@@ -21,7 +24,7 @@ func init() {
 
 func main() {
 	flag.Parse()
-	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	ln, err := net.Listen("tcp", "0.0.0.0:9999")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -33,7 +36,6 @@ func main() {
 			log.Println(err)
 			continue
 		}
-		log.Println("handler--")
 		handler(conn)
 
 	}
@@ -97,16 +99,70 @@ func handler(con net.Conn) {
 
 func ConvertHumanText(p []byte) []string {
 	humanText := make([]string, 0, len(p))
-	for _, v := range p {
-		if txt, ok := tclientlib.CodeTOASCII[v]; ok {
-			humanText = append(humanText, txt)
-		} else {
-			if unicode.IsPrint(rune(v)) {
-				humanText = append(humanText, string(v))
-				continue
-			}
-			humanText = append(humanText, "unknown code")
+	if len(p) == 0 {
+		return humanText
+	}
+	remain := p
+	for len(remain) > 0 {
+		var (
+			packet tclientlib.OptionPacket
+			ok     bool
+			code   rune
+		)
+		if packet, remain, ok = readOptionPacket(remain); ok {
+			humanText = append(humanText, packet.String())
+			continue
 		}
+		if code, remain, ok = readRunePacket(remain); ok {
+			if unicode.IsPrint(code) {
+				humanText = append(humanText, string(code))
+			} else {
+				log.Printf("could not print rune: %q", code)
+				humanText = append(humanText, fmt.Sprintf("%q", code))
+			}
+			continue
+		}
+		log.Println("unknown remain data and break: ", remain)
+		break
 	}
 	return humanText
+}
+
+func readOptionPacket(p []byte) (packet tclientlib.OptionPacket, rest []byte, ok bool) {
+	if len(p) == 0 {
+		return
+	}
+	if p[0] == tclientlib.IAC && len(p) >= 3 {
+		packet.OptionCode = p[1]
+		packet.CommandCode = p[2]
+		switch p[1] {
+		case tclientlib.WILL, tclientlib.WONT, tclientlib.DO, tclientlib.DONT:
+			log.Printf("option packet: %s\n", packet)
+			return packet, p[3:], true
+		case tclientlib.SB:
+			remain := p[3:]
+			index := bytes.IndexByte(remain, tclientlib.SE)
+			if index < 0 {
+				log.Panicf("%d %v", index, index)
+			}
+			packet.Parameters = make([]byte, len(remain[:index])-1)
+			copy(packet.Parameters, remain[:index])
+			log.Printf("option packet: %s\n", packet)
+			return packet, remain[index+1:], true
+		default:
+			log.Panicf("%v", p[1])
+		}
+	}
+	return packet, p, false
+}
+
+func readRunePacket(p []byte) (code rune, rest []byte, ok bool) {
+	if !utf8.FullRune(p) {
+		return utf8.RuneError, p, false
+	}
+	r, l := utf8.DecodeRune(p)
+	if r == utf8.RuneError {
+		return utf8.RuneError, p, false
+	}
+	return r, p[l:], true
 }
