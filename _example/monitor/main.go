@@ -28,16 +28,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(ln.Addr().String())
-	log.Println(IpAddr, Port)
+	log.Println("监听端口：", ln.Addr().String())
+	log.Println("代理的telnet服务地址：", net.JoinHostPort(IpAddr, Port))
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			log.Println(err)
 			continue
 		}
-		handler(conn)
-
+		go handler(conn)
 	}
 
 }
@@ -84,16 +83,23 @@ func handler(con net.Conn) {
 	}()
 
 	for {
+		var (
+			from      string
+			humanText []string
+		)
 		select {
 		case <-done:
 			return
 		case p := <-srvChan:
-			log.Println("server send: ", ConvertHumanText(p))
+			humanText = ConvertHumanText(p)
+			from = "server send"
 			_, _ = con.Write(p)
 		case p := <-clientChan:
-			log.Println("client send: ", ConvertHumanText(p))
+			humanText = ConvertHumanText(p)
+			from = "client send"
 			_, _ = dstCon.Write(p)
 		}
+		log.Printf("%s: len(%d) %v", from, len(humanText), humanText)
 	}
 }
 
@@ -109,15 +115,14 @@ func ConvertHumanText(p []byte) []string {
 			ok     bool
 			code   rune
 		)
-		if packet, remain, ok = readOptionPacket(remain); ok {
+		if packet, remain, ok = tclientlib.ReadOptionPacket(remain); ok {
 			humanText = append(humanText, packet.String())
 			continue
 		}
-		if code, remain, ok = readRunePacket(remain); ok {
+		if code, remain = readRunePacket(remain); code != utf8.RuneError {
 			if unicode.IsPrint(code) {
 				humanText = append(humanText, string(code))
 			} else {
-				log.Printf("could not print rune: %q", code)
 				humanText = append(humanText, fmt.Sprintf("%q", code))
 			}
 			continue
@@ -143,7 +148,7 @@ func readOptionPacket(p []byte) (packet tclientlib.OptionPacket, rest []byte, ok
 			remain := p[3:]
 			index := bytes.IndexByte(remain, tclientlib.SE)
 			if index < 0 {
-				log.Panicf("%d %v", index, index)
+				log.Panicf("%d %v", index, remain)
 			}
 			packet.Parameters = make([]byte, len(remain[:index])-1)
 			copy(packet.Parameters, remain[:index])
@@ -156,13 +161,7 @@ func readOptionPacket(p []byte) (packet tclientlib.OptionPacket, rest []byte, ok
 	return packet, p, false
 }
 
-func readRunePacket(p []byte) (code rune, rest []byte, ok bool) {
-	if !utf8.FullRune(p) {
-		return utf8.RuneError, p, false
-	}
+func readRunePacket(p []byte) (code rune, rest []byte) {
 	r, l := utf8.DecodeRune(p)
-	if r == utf8.RuneError {
-		return utf8.RuneError, p, false
-	}
-	return r, p[l:], true
+	return r, p[l:]
 }

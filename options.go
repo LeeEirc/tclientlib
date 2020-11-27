@@ -63,3 +63,29 @@ func ConvertSubOptions(commandCode byte, parameters []byte) string {
 		return builder.String()
 	}
 }
+
+func ReadOptionPacket(p []byte) (packet OptionPacket, rest []byte, ok bool) {
+	if len(p) == 0 {
+		return
+	}
+	if p[0] == IAC && len(p) >= 3 {
+		packet.OptionCode = p[1]
+		packet.CommandCode = p[2]
+		switch p[1] {
+		case WILL, WONT, DO, DONT:
+			return packet, p[3:], true
+		case SB:
+			remain := p[3:]
+			index := bytes.IndexByte(remain, SE)
+			if index < 0 {
+				log.Panicf("%d %v", index, remain)
+			}
+			packet.Parameters = make([]byte, len(remain[:index])-1)
+			copy(packet.Parameters, remain[:index])
+			return packet, remain[index+1:], true
+		default:
+			log.Panicf("%v %v", p[1], p[2:])
+		}
+	}
+	return packet, p, false
+}

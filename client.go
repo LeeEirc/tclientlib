@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"regexp"
 	"time"
 
 	"log"
@@ -23,9 +22,12 @@ type Client struct {
 	enableWindows bool
 
 	autoLogin bool
+
+	remainder []byte
+	inBuf     [256]byte
 }
 
-func (c *Client) clientHandshake() error {
+func (c *Client) handshake() (err error) {
 	echoPacket := OptionPacket{OptionCode: DO, CommandCode: ECHO}
 	SGAPacket := OptionPacket{OptionCode: DO, CommandCode: SGA}
 	_ = c.replyOptionPacket(SGAPacket)
@@ -46,8 +48,30 @@ func (c *Client) clientHandshake() error {
 			log.Println("Telnet client manual login")
 			return nil
 		}
+	}
+}
+
+func (c *Client) handlerOption(op *OptionPacket) *OptionPacket {
+	var packet OptionPacket
+	switch op.OptionCode {
+	case DO:
+		packet.CommandCode = op.CommandCode
+		switch op.CommandCode {
+		case ECHO:
+			packet.OptionCode = WONT
+
+			return &packet
+		case NAWS:
+
+		}
+	case DONT:
+	case WILL:
+	case WONT:
+
+	case SB:
 
 	}
+	return nil
 }
 
 func (c *Client) handleOption(option []byte) {
@@ -60,32 +84,32 @@ func (c *Client) handleOption(option []byte) {
 	case SB:
 		switch cmd {
 		case OLD_ENVIRON, NEW_ENVIRON:
-		//	switch option[3] {
-		//	case 1: // send command
-		//		sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
-		//		sub.options = append(sub.options, 3)
-		//		sub.options = append(sub.options, []byte(c.conf.User)...)
-		//		p.Parameters = &sub
-		//	}
-		//	// subCommand 0 is , 1 Send , 2 INFO
-		//	// VALUE     1
-		//	// ESC       2
-		//	// USERVAR   3
-		//case TTYPE:
-		//	switch option[3] {
-		//	case 1: // send command
-		//		sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
-		//		sub.options = append(sub.options, []byte(c.conf.TTYOptions.Xterm)...)
-		//		p.Parameters = &sub
-		//	}
-		//case NAWS:
-		//	sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
-		//	sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
-		//		0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
-		//	p.Parameters = &sub
-		//default:
-		//	return
-		//
+			//	switch option[3] {
+			//	case 1: // send command
+			//		sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
+			//		sub.options = append(sub.options, 3)
+			//		sub.options = append(sub.options, []byte(c.conf.User)...)
+			//		p.Parameters = &sub
+			//	}
+			//	// subCommand 0 is , 1 Send , 2 INFO
+			//	// VALUE     1
+			//	// ESC       2
+			//	// USERVAR   3
+			//case TTYPE:
+			//	switch option[3] {
+			//	case 1: // send command
+			//		sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
+			//		sub.options = append(sub.options, []byte(c.conf.TTYOptions.Xterm)...)
+			//		p.Parameters = &sub
+			//	}
+			//case NAWS:
+			//	sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
+			//	sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
+			//		0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
+			//	p.Parameters = &sub
+			//default:
+			//	return
+
 		}
 	default:
 		switch option[1] {
@@ -225,10 +249,8 @@ func (c *Client) WindowChange(w, h int) error {
 	var p OptionPacket
 	p.OptionCode = SB
 	p.CommandCode = NAWS
-	//sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
-	//sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
-	//	c.conf.TTYOptions.Wide, w, c.conf.TTYOptions.High, h))...)
-	//p.Parameters = &sub
+	p.Parameters = []byte(fmt.Sprintf("%d%d%d%d",
+		0, w, 0, h))
 	if err := c.replyOptionPacket(p); err != nil {
 		return err
 	}
@@ -236,42 +258,6 @@ func (c *Client) WindowChange(w, h int) error {
 	c.conf.TTYOptions.High = h
 	return nil
 
-}
-
-type ClientConfig struct {
-	User         string
-	Password     string
-	Timeout      time.Duration
-	TTYOptions   *TerminalOptions
-	CustomString string
-
-	customSuccessPattern *regexp.Regexp
-}
-
-func (conf *ClientConfig) SetDefaults() {
-	if conf.Timeout == 0 || conf.Timeout < defaultTimeout {
-		conf.Timeout = defaultTimeout
-	}
-	t := defaultTerminalOptions()
-	tops := conf.TTYOptions
-	if tops == nil {
-		conf.TTYOptions = &t
-	} else {
-		if tops.Wide == 0 {
-			tops.Wide = t.Wide
-		}
-		if tops.High == 0 {
-			tops.High = t.High
-		}
-		if tops.Xterm == "" {
-			tops.Xterm = "xterm"
-		}
-	}
-	if conf.CustomString != "" {
-		if cusPattern, err := regexp.Compile(conf.CustomString); err == nil {
-			conf.customSuccessPattern = cusPattern
-		}
-	}
 }
 
 func Dial(network, addr string, config *ClientConfig) (*Client, error) {
@@ -282,35 +268,21 @@ func Dial(network, addr string, config *ClientConfig) (*Client, error) {
 	return NewClientConn(conn, config)
 }
 
-func NewClientConn(c net.Conn, config *ClientConfig) (*Client, error) {
+func NewClientConn(conn net.Conn, config *ClientConfig) (*Client, error) {
 	fullConf := *config
 	fullConf.SetDefaults()
 	var autoLogin bool
 	if config.User != "" && config.Password != "" {
 		autoLogin = true
 	}
-	conn := &Client{
-		sock:      c,
+	client := &Client{
+		sock:      conn,
 		conf:      config,
 		autoLogin: autoLogin,
 	}
-	if err := conn.clientHandshake(); err != nil {
-		_ = c.Close()
+	if err := client.handshake(); err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("telnet: handshake failed: %s", err)
 	}
-	return conn, nil
-}
-
-type TerminalOptions struct {
-	Wide  int
-	High  int
-	Xterm string
-}
-
-func defaultTerminalOptions() TerminalOptions {
-	return TerminalOptions{
-		Wide:  80,
-		High:  24,
-		Xterm: "xterm",
-	}
+	return client, nil
 }
