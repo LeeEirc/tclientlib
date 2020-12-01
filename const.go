@@ -62,10 +62,10 @@ const (
 )
 
 var (
-	incorrectPattern, _ = regexp.Compile(FailedRegs)
-	usernamePattern, _  = regexp.Compile(loginRegs)
-	passwordPattern, _  = regexp.Compile(passwordRegs)
-	successPattern, _   = regexp.Compile(DefaultSuccessRegs)
+	usernamePattern, _            = regexp.Compile(loginRegs)
+	passwordPattern, _            = regexp.Compile(passwordRegs)
+	defaultLoginFailedPattern, _  = regexp.Compile(FailedRegs)
+	defaultLoginSuccessPattern, _ = regexp.Compile(DefaultSuccessRegs)
 )
 
 type AuthStatus int

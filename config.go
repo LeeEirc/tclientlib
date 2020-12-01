@@ -59,9 +59,9 @@ func (conf *ClientConfig) SetDefaults() {
 	}
 
 	if conf.LoginSuccessRegex == nil {
-		conf.LoginSuccessRegex = successPattern
+		conf.LoginSuccessRegex = defaultLoginSuccessPattern
 	}
 	if conf.LoginFailureRegex == nil {
-		conf.LoginFailureRegex = incorrectPattern
+		conf.LoginFailureRegex = defaultLoginFailedPattern
 	}
 }

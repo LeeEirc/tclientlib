@@ -62,7 +62,7 @@ func main() {
 				return
 			}
 			if err != nil {
-				log.Println("Unable to send window-change reqest.")
+				log.Println("Unable to send window-change request.")
 				continue
 			}
 		}

@@ -47,10 +47,7 @@ func (c *Client) loginAuthentication() error {
 }
 
 func (c *Client) handleLoginData(data []byte) AuthStatus {
-	if c.conf.LoginFailureRegex.Match(data) {
-		log.Printf("incorrect pattern match:%s \n", bytes.TrimSpace(data))
-		return AuthFailed
-	} else if c.conf.UsernameRegex.Match(data) {
+	if c.conf.UsernameRegex.Match(data) {
 		_, _ = c.sock.Write([]byte(c.conf.User + "\r\n"))
 		log.Printf("Username pattern match: %s \n", bytes.TrimSpace(data))
 		return AuthPartial
@@ -61,6 +58,9 @@ func (c *Client) handleLoginData(data []byte) AuthStatus {
 	} else if c.conf.LoginSuccessRegex.Match(data) {
 		log.Printf("successPattern match: %s \n", bytes.TrimSpace(data))
 		return AuthSuccess
+	} else if c.conf.LoginFailureRegex.Match(data) {
+		log.Printf("incorrect pattern match:%s \n", bytes.TrimSpace(data))
+		return AuthFailed
 	}
 	log.Printf("unmatch data: %s \n", bytes.TrimSpace(data))
 	return AuthPartial
