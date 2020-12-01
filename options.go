@@ -13,7 +13,7 @@ type OptionPacket struct {
 	Parameters  []byte // SB parameters
 }
 
-func (p *OptionPacket) Bytes() []byte {
+func (p OptionPacket) Bytes() []byte {
 	var buf bytes.Buffer
 	buf.WriteByte(IAC)
 	buf.WriteByte(p.OptionCode)
@@ -82,15 +82,15 @@ func ReadOptionPacket(p []byte) (packet OptionPacket, rest []byte, ok bool) {
 			remain := p[3:]
 			index := bytes.IndexByte(remain, SE)
 			if index < 0 {
-				log.Printf("%d %v\n", index, remain)
+				log.Printf("failed index %d %v\n", index, remain)
 				// ENVIRON valid send no var
-				return packet, remain[3:], true
+				return packet, remain, true
 			}
 			packet.Parameters = make([]byte, len(remain[:index])-1)
 			copy(packet.Parameters, remain[:index])
 			return packet, remain[index+1:], true
 		default:
-			log.Printf("%v %v\n", p[1], p[2:])
+			log.Printf("failed %v %v\n", p[1], p[2:])
 		}
 	}
 	return packet, p, false

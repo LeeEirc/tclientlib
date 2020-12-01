@@ -19,14 +19,14 @@ type Client struct {
 	autoLogin     bool
 }
 
-func (c *Client) handshake() (err error) {
+func (c *Client) handshake() error {
 	if c.autoLogin {
-		return c.login()
+		return c.loginAuthentication()
 	}
 	return nil
 }
 
-func (c *Client) login() error {
+func (c *Client) loginAuthentication() error {
 	buf := make([]byte, 1024)
 	for {
 		nr, err := c.Read(buf)
@@ -75,8 +75,8 @@ func (c *Client) replyOptionPackets(opts ...OptionPacket) error {
 	return err
 }
 
-func (c *Client) Read(b []byte) (int, error) {
-	innerBuf := make([]byte, len(b))
+func (c *Client) Read(p []byte) (int, error) {
+	innerBuf := make([]byte, len(p))
 	var (
 		ok     bool
 		nr     int
@@ -85,39 +85,44 @@ func (c *Client) Read(b []byte) (int, error) {
 		remain []byte
 	)
 	// 劫持解析option的包，过滤处理 option packet
+	allPackets := make([]OptionPacket, 0, 5)
+loop:
 	for {
 		nr, err = c.sock.Read(innerBuf)
 		if err != nil {
 			return 0, err
 		}
 		remain = innerBuf[:nr]
+
 		for {
 			if packet, remain, ok = ReadOptionPacket(remain); ok {
-				if err := c.handleOptionPacket(packet); err != nil {
-					return 0, err
-				}
+				allPackets = append(allPackets, c.handleOptionPacket(packet))
 				continue
 			}
-			break
+			if len(allPackets) > 0 {
+				if err := c.replyOptionPackets(allPackets...); err != nil {
+					return 0, err
+				}
+			}
+			allPackets = allPackets[:0]
+			if len(remain) == 0 {
+				goto loop
+			}
+			break loop
 		}
-		if len(remain) == 0 {
-			continue
-		}
-		break
 	}
-	return copy(b, remain), err
+	return copy(p, remain), err
 }
 
-func (c *Client) handleOptionPacket(p OptionPacket) error {
+func (c *Client) handleOptionPacket(p OptionPacket) OptionPacket {
 	var (
-		replyPacket  OptionPacket
-		extraPackets []OptionPacket
+		replyPacket OptionPacket
 	)
-	extraPackets = make([]OptionPacket, 0)
 	replyPacket.CommandCode = p.CommandCode
 	switch p.OptionCode {
 	case SB:
 		replyPacket.OptionCode = SB
+		replyPacket.Parameters = make([]byte, 0)
 		if len(p.Parameters) >= 1 {
 			// subCommand 0 is , 1 Send , 2 INFO
 			// VALUE     1
@@ -125,37 +130,55 @@ func (c *Client) handleOptionPacket(p OptionPacket) error {
 			// USERVAR   3
 			switch p.Parameters[0] {
 			case 1:
-				replyPacket.Parameters = append(replyPacket.Parameters, 0)
 				switch p.CommandCode {
 				case OLD_ENVIRON, NEW_ENVIRON:
+					if c.conf.User != "" {
+						replyPacket.Parameters = append(replyPacket.Parameters, 0)
+						replyPacket.Parameters = append(replyPacket.Parameters, []byte("USER")...)
+						replyPacket.Parameters = append(replyPacket.Parameters, 1)
+						replyPacket.Parameters = append(replyPacket.Parameters, []byte(c.conf.User)...)
+					}
 				case TSPEED:
+					replyPacket.Parameters = append(replyPacket.Parameters, 0)
 					replyPacket.Parameters = append(replyPacket.Parameters, []byte(fmt.Sprintf(
 						"%d%d", 38400, 38400))...)
 				case TTYPE:
+					replyPacket.Parameters = append(replyPacket.Parameters, 0)
 					replyPacket.Parameters = append(replyPacket.Parameters, []byte(fmt.Sprintf(
 						"%s", c.conf.TTYOptions.TermType))...)
+				default:
+					replyPacket.OptionCode = WONT
 				}
 			}
+		} else {
+			replyPacket.OptionCode = WONT
 		}
+
 	case DO:
 		switch p.CommandCode {
-		case TTYPE, TSPEED, NEW_ENVIRON, LFLOW:
+		case TTYPE, TSPEED:
 			replyPacket.OptionCode = WILL
 		case NAWS:
 			replyPacket.OptionCode = WILL
-			var extraPacket OptionPacket
-			extraPacket.CommandCode = p.CommandCode
-			extraPacket.OptionCode = SB
-			extraPacket.Parameters = make([]byte, 0)
-			extraPacket.Parameters = append(extraPacket.Parameters, []byte(fmt.Sprintf("%d%d%d%d",
-				0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
-			extraPackets = append(extraPackets, extraPacket)
+			c.enableWindows = true
+			//var extraPacket OptionPacket
+			//extraPacket.CommandCode = p.CommandCode
+			//extraPacket.OptionCode = SB
+			//extraPacket.Parameters = make([]byte, 0)
+			//extraPacket.Parameters = append(extraPacket.Parameters, []byte(fmt.Sprintf("%d%d%d%d",
+			//	0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
+			//extraPackets = append(extraPackets, extraPacket)
 			// 窗口大小
 		default:
 			replyPacket.OptionCode = WONT
 		}
 	case WILL:
-		replyPacket.OptionCode = DO
+		switch p.CommandCode {
+		case XDISPLOC:
+			replyPacket.OptionCode = DONT
+		default:
+			replyPacket.OptionCode = DO
+		}
 	case DONT:
 		replyPacket.OptionCode = WONT
 	case WONT:
@@ -163,10 +186,7 @@ func (c *Client) handleOptionPacket(p OptionPacket) error {
 	default:
 		log.Printf("match option code unknown: %b\n", p.OptionCode)
 	}
-	replayPackets := make([]OptionPacket, 0, len(extraPackets)+1)
-	replayPackets = append(replayPackets, replyPacket)
-	copy(replayPackets[1:], extraPackets)
-	return c.replyOptionPackets(replayPackets...)
+	return replyPacket
 }
 
 func (c *Client) Write(b []byte) (int, error) {

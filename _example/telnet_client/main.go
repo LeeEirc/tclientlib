@@ -10,8 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/crypto/ssh/terminal"
-
 	"github.com/LeeEirc/tclientlib"
 )
 
@@ -40,13 +38,6 @@ func main() {
 	if err != nil {
 		log.Panicln(err)
 	}
-	fd := int(os.Stdin.Fd())
-	state, err := terminal.MakeRaw(fd)
-	if err != nil {
-		log.Fatalf("MakeRaw err: %s", err)
-	}
-	defer terminal.Restore(fd, state)
-
 	sigChan := make(chan struct{}, 1)
 
 	go func() {
@@ -70,15 +61,8 @@ func main() {
 			if sigwinch == nil {
 				return
 			}
-			w, d, err := terminal.GetSize(fd)
 			if err != nil {
-				log.Printf("Unable to send window-change reqest: %s. \n", err)
-				continue
-			}
-			// 更新远端大小
-			err = client.WindowChange(w, d)
-			if err != nil {
-				log.Printf("window-change err: %s\n", err)
+				log.Println("Unable to send window-change reqest.")
 				continue
 			}
 		}

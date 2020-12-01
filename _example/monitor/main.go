@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"log"
@@ -53,6 +52,7 @@ func handler(con net.Conn) {
 	srvChan := make(chan []byte)
 	clientChan := make(chan []byte)
 	done := make(chan struct{}, 2)
+	finished := make(chan struct{})
 	go func() {
 		readBuf := make([]byte, 1024)
 		for {
@@ -62,6 +62,7 @@ func handler(con net.Conn) {
 				break
 			}
 			srvChan <- readBuf[:nr]
+			<-finished
 
 		}
 		done <- struct{}{}
@@ -77,6 +78,7 @@ func handler(con net.Conn) {
 				break
 			}
 			clientChan <- writeBuf[:wr]
+			<-finished
 		}
 		done <- struct{}{}
 		log.Println("close con")
@@ -94,11 +96,14 @@ func handler(con net.Conn) {
 			humanText = ConvertHumanText(p)
 			from = "server send"
 			_, _ = con.Write(p)
+
 		case p := <-clientChan:
 			humanText = ConvertHumanText(p)
 			from = "client send"
 			_, _ = dstCon.Write(p)
+
 		}
+		finished <- struct{}{}
 		log.Printf("%s: len(%d) %v", from, len(humanText), humanText)
 	}
 }
@@ -131,34 +136,6 @@ func ConvertHumanText(p []byte) []string {
 		break
 	}
 	return humanText
-}
-
-func readOptionPacket(p []byte) (packet tclientlib.OptionPacket, rest []byte, ok bool) {
-	if len(p) == 0 {
-		return
-	}
-	if p[0] == tclientlib.IAC && len(p) >= 3 {
-		packet.OptionCode = p[1]
-		packet.CommandCode = p[2]
-		switch p[1] {
-		case tclientlib.WILL, tclientlib.WONT, tclientlib.DO, tclientlib.DONT:
-			log.Printf("option packet: %s\n", packet)
-			return packet, p[3:], true
-		case tclientlib.SB:
-			remain := p[3:]
-			index := bytes.IndexByte(remain, tclientlib.SE)
-			if index < 0 {
-				log.Panicf("%d %v", index, remain)
-			}
-			packet.Parameters = make([]byte, len(remain[:index])-1)
-			copy(packet.Parameters, remain[:index])
-			log.Printf("option packet: %s\n", packet)
-			return packet, remain[index+1:], true
-		default:
-			log.Panicf("%v", p[1])
-		}
-	}
-	return packet, p, false
 }
 
 func readRunePacket(p []byte) (code rune, rest []byte) {
