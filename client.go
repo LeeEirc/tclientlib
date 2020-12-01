@@ -1,237 +1,172 @@
 package tclientlib
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"time"
 
 	"log"
 )
 
-const prefixLen = 2
 const defaultTimeout = time.Second * 15
 
 type Client struct {
-	conf    *ClientConfig
-	sock    net.Conn
-	prefix  [prefixLen]byte
-	oneByte [1]byte
-
+	conf          *ClientConfig
+	sock          net.Conn
 	enableWindows bool
-
-	autoLogin bool
-
-	remainder []byte
-	inBuf     [256]byte
+	autoLogin     bool
 }
 
 func (c *Client) handshake() (err error) {
-	echoPacket := OptionPacket{OptionCode: DO, CommandCode: ECHO}
-	SGAPacket := OptionPacket{OptionCode: DO, CommandCode: SGA}
-	_ = c.replyOptionPacket(SGAPacket)
-	_ = c.replyOptionPacket(echoPacket)
-	for {
-		p, err := c.readOptionPacket()
-		if err != nil {
-			log.Println("Telnet read option packet err: ", err)
-			return err
-		}
-		switch p[0] {
-		case IAC:
-			c.handleOption(p)
-		default:
-			if c.autoLogin {
-				return c.login()
-			}
-			log.Println("Telnet client manual login")
-			return nil
-		}
-	}
-}
-
-func (c *Client) handlerOption(op *OptionPacket) *OptionPacket {
-	var packet OptionPacket
-	switch op.OptionCode {
-	case DO:
-		packet.CommandCode = op.CommandCode
-		switch op.CommandCode {
-		case ECHO:
-			packet.OptionCode = WONT
-
-			return &packet
-		case NAWS:
-
-		}
-	case DONT:
-	case WILL:
-	case WONT:
-
-	case SB:
-
+	if c.autoLogin {
+		return c.login()
 	}
 	return nil
-}
-
-func (c *Client) handleOption(option []byte) {
-	var p OptionPacket
-	log.Printf("Telnet server %s %s\n", CodeTOASCII[option[1]], CodeTOASCII[option[2]])
-	p.OptionCode = option[1]
-	cmd := option[2]
-	p.CommandCode = cmd
-	switch option[1] {
-	case SB:
-		switch cmd {
-		case OLD_ENVIRON, NEW_ENVIRON:
-			//	switch option[3] {
-			//	case 1: // send command
-			//		sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
-			//		sub.options = append(sub.options, 3)
-			//		sub.options = append(sub.options, []byte(c.conf.User)...)
-			//		p.Parameters = &sub
-			//	}
-			//	// subCommand 0 is , 1 Send , 2 INFO
-			//	// VALUE     1
-			//	// ESC       2
-			//	// USERVAR   3
-			//case TTYPE:
-			//	switch option[3] {
-			//	case 1: // send command
-			//		sub := subOptionPacket{subCommand: 0, options: make([]byte, 0)}
-			//		sub.options = append(sub.options, []byte(c.conf.TTYOptions.Xterm)...)
-			//		p.Parameters = &sub
-			//	}
-			//case NAWS:
-			//	sub := subOptionPacket{subCommand: IAC, options: make([]byte, 0)}
-			//	sub.options = append(sub.options, []byte(fmt.Sprintf("%d%d%d%d",
-			//		0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
-			//	p.Parameters = &sub
-			//default:
-			//	return
-
-		}
-	default:
-		switch option[1] {
-		case DO:
-			switch option[2] {
-			case ECHO:
-				p.OptionCode = WONT
-			case TTYPE, NEW_ENVIRON:
-				p.OptionCode = WILL
-			case NAWS:
-				p.OptionCode = WILL
-				c.enableWindows = true
-			default:
-				p.OptionCode = WONT
-			}
-		case WILL:
-			switch option[2] {
-			case ECHO:
-				p.OptionCode = DO
-			case SGA:
-				p.OptionCode = DO
-			default:
-				p.OptionCode = DONT
-			}
-		case DONT:
-			p.OptionCode = WONT
-		case WONT:
-			p.OptionCode = DONT
-		}
-	}
-	log.Printf("Telnet client %s %s\n", CodeTOASCII[p.OptionCode], CodeTOASCII[p.CommandCode])
-	if err := c.replyOptionPacket(p); err != nil {
-		log.Println("Telnet handler option err: ", err)
-	}
-
 }
 
 func (c *Client) login() error {
 	buf := make([]byte, 1024)
 	for {
-		nr, err := c.sock.Read(buf)
+		nr, err := c.Read(buf)
 		if err != nil {
 			return err
 		}
 		result := c.handleLoginData(buf[:nr])
 		switch result {
 		case AuthSuccess:
+			_, _ = c.Write([]byte("\r\n"))
 			return nil
 		case AuthFailed:
 			return errors.New("failed login")
 		default:
 			continue
 		}
-
 	}
 }
 
 func (c *Client) handleLoginData(data []byte) AuthStatus {
-	if incorrectPattern.Match(data) {
-		log.Printf("incorrect pattern match:%s \n", data)
+	if c.conf.LoginFailureRegex.Match(data) {
+		log.Printf("incorrect pattern match:%s \n", bytes.TrimSpace(data))
 		return AuthFailed
-	} else if usernamePattern.Match(data) {
+	} else if c.conf.UsernameRegex.Match(data) {
 		_, _ = c.sock.Write([]byte(c.conf.User + "\r\n"))
-		log.Printf("Username pattern match: %s \n", data)
+		log.Printf("Username pattern match: %s \n", bytes.TrimSpace(data))
 		return AuthPartial
-	} else if passwordPattern.Match(data) {
+	} else if c.conf.PasswordRegex.Match(data) {
 		_, _ = c.sock.Write([]byte(c.conf.Password + "\r\n"))
-		log.Printf("Password pattern match: %s \n", data)
+		log.Printf("Password pattern match: %s \n", bytes.TrimSpace(data))
 		return AuthPartial
-	} else if successPattern.Match(data) {
-		log.Printf("successPattern match: %s \n", data)
+	} else if c.conf.LoginSuccessRegex.Match(data) {
+		log.Printf("successPattern match: %s \n", bytes.TrimSpace(data))
 		return AuthSuccess
 	}
-	if c.conf.CustomString != "" && c.conf.customSuccessPattern != nil {
-		if c.conf.customSuccessPattern.Match(data) {
-			log.Printf("CustomString match: %s \n", data)
-			return AuthSuccess
-		}
-	}
-	log.Printf("unmatch data: %s \n", data)
+	log.Printf("unmatch data: %s \n", bytes.TrimSpace(data))
 	return AuthPartial
 }
 
-func (c *Client) readOptionPacket() ([]byte, error) {
-	if _, err := io.ReadFull(c.sock, c.oneByte[:]); err != nil {
-		return nil, err
+func (c *Client) replyOptionPackets(opts ...OptionPacket) error {
+	var buf bytes.Buffer
+	for i := range opts {
+		buf.Write(opts[i].Bytes())
 	}
-	p := make([]byte, 0, 3)
-	p = append(p, c.oneByte[0])
-	switch c.oneByte[0] {
-	case IAC:
-		if _, err := io.ReadFull(c.sock, c.prefix[:]); err != nil {
-			return nil, err
-		}
-		p = append(p, c.prefix[:]...)
-		switch c.prefix[0] {
-		case SB:
-			for {
-				if _, err := io.ReadFull(c.sock, c.oneByte[:]); err != nil {
-					return nil, err
-				}
-				switch c.oneByte[0] {
-				case IAC:
-					continue
-				case SE:
-					return p, nil
-				default:
-					p = append(p, c.oneByte[0])
-				}
-			}
-		}
-	}
-	return p, nil
-}
-
-func (c *Client) replyOptionPacket(p OptionPacket) error {
-	_, err := c.sock.Write(p.Bytes())
+	_, err := c.sock.Write(buf.Bytes())
 	return err
 }
 
 func (c *Client) Read(b []byte) (int, error) {
-	return c.sock.Read(b)
+	innerBuf := make([]byte, len(b))
+	var (
+		ok     bool
+		nr     int
+		err    error
+		packet OptionPacket
+		remain []byte
+	)
+	// 劫持解析option的包，过滤处理 option packet
+	for {
+		nr, err = c.sock.Read(innerBuf)
+		if err != nil {
+			return 0, err
+		}
+		remain = innerBuf[:nr]
+		for {
+			if packet, remain, ok = ReadOptionPacket(remain); ok {
+				if err := c.handleOptionPacket(packet); err != nil {
+					return 0, err
+				}
+				continue
+			}
+			break
+		}
+		if len(remain) == 0 {
+			continue
+		}
+		break
+	}
+	return copy(b, remain), err
+}
+
+func (c *Client) handleOptionPacket(p OptionPacket) error {
+	var (
+		replyPacket  OptionPacket
+		extraPackets []OptionPacket
+	)
+	extraPackets = make([]OptionPacket, 0)
+	replyPacket.CommandCode = p.CommandCode
+	switch p.OptionCode {
+	case SB:
+		replyPacket.OptionCode = SB
+		if len(p.Parameters) >= 1 {
+			// subCommand 0 is , 1 Send , 2 INFO
+			// VALUE     1
+			// ESC       2
+			// USERVAR   3
+			switch p.Parameters[0] {
+			case 1:
+				replyPacket.Parameters = append(replyPacket.Parameters, 0)
+				switch p.CommandCode {
+				case OLD_ENVIRON, NEW_ENVIRON:
+				case TSPEED:
+					replyPacket.Parameters = append(replyPacket.Parameters, []byte(fmt.Sprintf(
+						"%d%d", 38400, 38400))...)
+				case TTYPE:
+					replyPacket.Parameters = append(replyPacket.Parameters, []byte(fmt.Sprintf(
+						"%s", c.conf.TTYOptions.TermType))...)
+				}
+			}
+		}
+	case DO:
+		switch p.CommandCode {
+		case TTYPE, TSPEED, NEW_ENVIRON, LFLOW:
+			replyPacket.OptionCode = WILL
+		case NAWS:
+			replyPacket.OptionCode = WILL
+			var extraPacket OptionPacket
+			extraPacket.CommandCode = p.CommandCode
+			extraPacket.OptionCode = SB
+			extraPacket.Parameters = make([]byte, 0)
+			extraPacket.Parameters = append(extraPacket.Parameters, []byte(fmt.Sprintf("%d%d%d%d",
+				0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
+			extraPackets = append(extraPackets, extraPacket)
+			// 窗口大小
+		default:
+			replyPacket.OptionCode = WONT
+		}
+	case WILL:
+		replyPacket.OptionCode = DO
+	case DONT:
+		replyPacket.OptionCode = WONT
+	case WONT:
+		replyPacket.OptionCode = DONT
+	default:
+		log.Printf("match option code unknown: %b\n", p.OptionCode)
+	}
+	replayPackets := make([]OptionPacket, 0, len(extraPackets)+1)
+	replayPackets = append(replayPackets, replyPacket)
+	copy(replayPackets[1:], extraPackets)
+	return c.replyOptionPackets(replayPackets...)
 }
 
 func (c *Client) Write(b []byte) (int, error) {
@@ -251,7 +186,7 @@ func (c *Client) WindowChange(w, h int) error {
 	p.CommandCode = NAWS
 	p.Parameters = []byte(fmt.Sprintf("%d%d%d%d",
 		0, w, 0, h))
-	if err := c.replyOptionPacket(p); err != nil {
+	if err := c.replyOptionPackets(p); err != nil {
 		return err
 	}
 	c.conf.TTYOptions.Wide = w
@@ -277,7 +212,7 @@ func NewClientConn(conn net.Conn, config *ClientConfig) (*Client, error) {
 	}
 	client := &Client{
 		sock:      conn,
-		conf:      config,
+		conf:      &fullConf,
 		autoLogin: autoLogin,
 	}
 	if err := client.handshake(); err != nil {

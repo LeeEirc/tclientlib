@@ -28,7 +28,7 @@ func (p *OptionPacket) Bytes() []byte {
 
 func (p OptionPacket) String() string {
 	var builder strings.Builder
-	_, _ = builder.WriteString(fmt.Sprintf("IAC %s %s",
+	builder.WriteString(fmt.Sprintf("IAC %s %s",
 		CodeTOASCII[p.OptionCode],
 		CodeTOASCII[p.CommandCode]))
 	if p.Parameters != nil {
@@ -46,7 +46,11 @@ func ConvertSubOptions(commandCode byte, parameters []byte) string {
 	case NAWS:
 		// NAWS (Negotiate About Window Size)
 		if len(parameters) != 4 {
-			log.Panic("parameters should 4\n")
+			var s strings.Builder
+			for i := range parameters {
+				s.WriteString(fmt.Sprintf("%q", parameters[i]))
+			}
+			return s.String()
 		}
 		return fmt.Sprintf("%d %d %d %d",
 			parameters[0],
@@ -78,14 +82,24 @@ func ReadOptionPacket(p []byte) (packet OptionPacket, rest []byte, ok bool) {
 			remain := p[3:]
 			index := bytes.IndexByte(remain, SE)
 			if index < 0 {
-				log.Panicf("%d %v", index, remain)
+				log.Printf("%d %v\n", index, remain)
+				// ENVIRON valid send no var
+				return packet, remain[3:], true
 			}
 			packet.Parameters = make([]byte, len(remain[:index])-1)
 			copy(packet.Parameters, remain[:index])
 			return packet, remain[index+1:], true
 		default:
-			log.Panicf("%v %v", p[1], p[2:])
+			log.Printf("%v %v\n", p[1], p[2:])
 		}
 	}
 	return packet, p, false
 }
+
+func parseParameters(commandCode byte, f func(params []byte, result interface{}) error) {
+
+}
+
+/*
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build
+*/

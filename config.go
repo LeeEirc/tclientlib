@@ -6,27 +6,29 @@ import (
 )
 
 type TerminalOptions struct {
-	Wide  int
-	High  int
-	Xterm string
+	Wide     int
+	High     int
+	TermType string
 }
 
 func defaultTerminalOptions() TerminalOptions {
 	return TerminalOptions{
-		Wide:  80,
-		High:  24,
-		Xterm: "xterm",
+		Wide:     80,
+		High:     24,
+		TermType: "xterm",
 	}
 }
 
 type ClientConfig struct {
-	User         string
-	Password     string
-	Timeout      time.Duration
-	TTYOptions   *TerminalOptions
-	CustomString string
+	User       string
+	Password   string
+	Timeout    time.Duration
+	TTYOptions *TerminalOptions
 
-	customSuccessPattern *regexp.Regexp
+	UsernameRegex     *regexp.Regexp
+	PasswordRegex     *regexp.Regexp
+	LoginFailureRegex *regexp.Regexp
+	LoginSuccessRegex *regexp.Regexp
 }
 
 func (conf *ClientConfig) SetDefaults() {
@@ -34,23 +36,32 @@ func (conf *ClientConfig) SetDefaults() {
 		conf.Timeout = defaultTimeout
 	}
 	t := defaultTerminalOptions()
-	tops := conf.TTYOptions
-	if tops == nil {
+	opts := conf.TTYOptions
+	if opts == nil {
 		conf.TTYOptions = &t
 	} else {
-		if tops.Wide == 0 {
-			tops.Wide = t.Wide
+		if opts.Wide == 0 {
+			opts.Wide = t.Wide
 		}
-		if tops.High == 0 {
-			tops.High = t.High
+		if opts.High == 0 {
+			opts.High = t.High
 		}
-		if tops.Xterm == "" {
-			tops.Xterm = "xterm"
+		if opts.TermType == "" {
+			opts.TermType = "xterm"
 		}
 	}
-	if conf.CustomString != "" {
-		if cusPattern, err := regexp.Compile(conf.CustomString); err == nil {
-			conf.customSuccessPattern = cusPattern
-		}
+	if conf.UsernameRegex == nil {
+		conf.UsernameRegex = usernamePattern
+	}
+
+	if conf.PasswordRegex == nil {
+		conf.PasswordRegex = passwordPattern
+	}
+
+	if conf.LoginSuccessRegex == nil {
+		conf.LoginSuccessRegex = successPattern
+	}
+	if conf.LoginFailureRegex == nil {
+		conf.LoginFailureRegex = incorrectPattern
 	}
 }
