@@ -8,6 +8,8 @@ const (
 	WILL = 251
 )
 
+
+// 参考 https://www.iana.org/assignments/telnet-options/telnet-options.xhtml
 const (
 	SE = 240 // Subnegotiation End
 
