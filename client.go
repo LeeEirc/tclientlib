@@ -13,7 +13,7 @@ import (
 const defaultTimeout = time.Second * 15
 
 type Client struct {
-	conf          *ClientConfig
+	conf          *Config
 	sock          net.Conn
 	enableWindows bool
 	autoLogin     bool
@@ -48,7 +48,7 @@ func (c *Client) loginAuthentication() error {
 
 func (c *Client) handleLoginData(data []byte) AuthStatus {
 	if c.conf.UsernameRegex.Match(data) {
-		_, _ = c.sock.Write([]byte(c.conf.User + "\r\n"))
+		_, _ = c.sock.Write([]byte(c.conf.Username + "\r\n"))
 		log.Printf("Username pattern match: %s \n", bytes.TrimSpace(data))
 		return AuthPartial
 	} else if c.conf.PasswordRegex.Match(data) {
@@ -132,11 +132,11 @@ func (c *Client) handleOptionPacket(p OptionPacket) OptionPacket {
 			case 1:
 				switch p.CommandCode {
 				case OLD_ENVIRON, NEW_ENVIRON:
-					if c.conf.User != "" {
+					if c.conf.Username != "" {
 						replyPacket.Parameters = append(replyPacket.Parameters, 0)
 						replyPacket.Parameters = append(replyPacket.Parameters, []byte("USER")...)
 						replyPacket.Parameters = append(replyPacket.Parameters, 1)
-						replyPacket.Parameters = append(replyPacket.Parameters, []byte(c.conf.User)...)
+						replyPacket.Parameters = append(replyPacket.Parameters, []byte(c.conf.Username)...)
 					}
 				case TSPEED:
 					replyPacket.Parameters = append(replyPacket.Parameters, 0)
@@ -215,7 +215,7 @@ func (c *Client) WindowChange(w, h int) error {
 
 }
 
-func Dial(network, addr string, config *ClientConfig) (*Client, error) {
+func Dial(network, addr string, config *Config) (*Client, error) {
 	conn, err := net.DialTimeout(network, addr, config.Timeout)
 	if err != nil {
 		return nil, err
@@ -223,11 +223,11 @@ func Dial(network, addr string, config *ClientConfig) (*Client, error) {
 	return NewClientConn(conn, config)
 }
 
-func NewClientConn(conn net.Conn, config *ClientConfig) (*Client, error) {
+func NewClientConn(conn net.Conn, config *Config) (*Client, error) {
 	fullConf := *config
 	fullConf.SetDefaults()
 	var autoLogin bool
-	if config.User != "" && config.Password != "" {
+	if config.Username != "" && config.Password != "" {
 		autoLogin = true
 	}
 	client := &Client{

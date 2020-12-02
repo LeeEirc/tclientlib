@@ -29,8 +29,8 @@ func init() {
 
 func main() {
 	flag.Parse()
-	conf := tclientlib.ClientConfig{
-		User:     username,
+	conf := tclientlib.Config{
+		Username: username,
 		Password: password,
 		Timeout:  30 * time.Second,
 	}

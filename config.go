@@ -19,8 +19,8 @@ func defaultTerminalOptions() TerminalOptions {
 	}
 }
 
-type ClientConfig struct {
-	User       string
+type Config struct {
+	Username   string
 	Password   string
 	Timeout    time.Duration
 	TTYOptions *TerminalOptions
@@ -31,7 +31,7 @@ type ClientConfig struct {
 	LoginSuccessRegex *regexp.Regexp
 }
 
-func (conf *ClientConfig) SetDefaults() {
+func (conf *Config) SetDefaults() {
 	if conf.Timeout == 0 || conf.Timeout < defaultTimeout {
 		conf.Timeout = defaultTimeout
 	}
