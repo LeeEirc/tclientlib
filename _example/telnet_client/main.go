@@ -36,7 +36,8 @@ func main() {
 	}
 	client, err := tclientlib.Dial("tcp", net.JoinHostPort(IpAddr, Port), &conf)
 	if err != nil {
-		log.Panicln(err)
+		log.Println(err)
+		os.Exit(1)
 	}
 	sigChan := make(chan struct{}, 1)
 
