@@ -141,7 +141,7 @@ func (c *Client) handleOptionPacket(p OptionPacket) OptionPacket {
 				case TSPEED:
 					replyPacket.Parameters = append(replyPacket.Parameters, 0)
 					replyPacket.Parameters = append(replyPacket.Parameters, []byte(fmt.Sprintf(
-						"%d%d", 38400, 38400))...)
+						"%d,%d", 38400, 38400))...)
 				case TTYPE:
 					replyPacket.Parameters = append(replyPacket.Parameters, 0)
 					replyPacket.Parameters = append(replyPacket.Parameters, []byte(fmt.Sprintf(
