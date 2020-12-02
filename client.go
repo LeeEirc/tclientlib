@@ -204,8 +204,12 @@ func (c *Client) WindowChange(w, h int) error {
 	var p OptionPacket
 	p.OptionCode = SB
 	p.CommandCode = NAWS
-	p.Parameters = []byte(fmt.Sprintf("%d%d%d%d",
-		0, w, 0, h))
+	params := make([]byte, 0, 4)
+	params = append(params, 0)
+	params = append(params, byte(w))
+	params = append(params, 0)
+	params = append(params, byte(h))
+	p.Parameters = params
 	if err := c.replyOptionPackets(p); err != nil {
 		return err
 	}
