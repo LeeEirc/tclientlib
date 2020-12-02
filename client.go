@@ -67,7 +67,7 @@ func (c *Client) handleLoginData(data []byte) AuthStatus {
 		return AuthFailed
 	}
 
-	traceLog("unmatch data: %s \r\n", bytes.TrimSpace(data))
+	traceLogf("unmatch data: %s \r\n", bytes.TrimSpace(data))
 	return AuthPartial
 }
 
