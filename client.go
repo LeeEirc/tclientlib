@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net"
 	"time"
-
-	"log"
 )
 
 const defaultTimeout = time.Second * 15
@@ -97,6 +95,7 @@ loop:
 	for {
 		nr, err = c.sock.Read(innerBuf)
 		if err != nil {
+			traceLogf("%s\r\n", err)
 			return 0, err
 		}
 		remain = innerBuf[:nr]
@@ -109,6 +108,7 @@ loop:
 			}
 			if len(replyPackets) > 0 {
 				if err := c.replyOptionPackets(replyPackets...); err != nil {
+					traceLogf("%s\r\n", err)
 					return 0, err
 				}
 			}
@@ -192,7 +192,7 @@ func (c *Client) handleOptionPacket(p OptionPacket) OptionPacket {
 	case WONT:
 		replyPacket.OptionCode = DONT
 	default:
-		log.Printf("match option code unknown: %b\n", p.OptionCode)
+		traceLogf("match option code unknown: %b\r\n", p.OptionCode)
 	}
 	return replyPacket
 }
@@ -219,6 +219,7 @@ func (c *Client) WindowChange(w, h int) error {
 	params = append(params, byte(h))
 	p.Parameters = params
 	if err := c.replyOptionPackets(p); err != nil {
+		traceLogf("%s\r\n", err)
 		return err
 	}
 	c.conf.TTYOptions.Wide = w

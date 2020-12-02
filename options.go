@@ -3,7 +3,6 @@ package tclientlib
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -82,7 +81,7 @@ func ReadOptionPacket(p []byte) (packet OptionPacket, rest []byte, ok bool) {
 			remain := p[3:]
 			index := bytes.IndexByte(remain, SE)
 			if index < 0 {
-				log.Printf("failed index %d %v\n", index, remain)
+				traceLogf("failed index %d %v\r\n", index, remain)
 				// ENVIRON valid send no var
 				return packet, remain, true
 			}
@@ -90,7 +89,7 @@ func ReadOptionPacket(p []byte) (packet OptionPacket, rest []byte, ok bool) {
 			copy(packet.Parameters, remain[:index])
 			return packet, remain[index+1:], true
 		default:
-			log.Printf("failed %v %v\n", p[1], p[2:])
+			traceLogf("failed %v %v\r\n", p[1], p[2:])
 		}
 	}
 	return packet, p, false
