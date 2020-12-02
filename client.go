@@ -49,20 +49,27 @@ func (c *Client) loginAuthentication() error {
 func (c *Client) handleLoginData(data []byte) AuthStatus {
 	if c.conf.UsernameRegex.Match(data) {
 		_, _ = c.sock.Write([]byte(c.conf.Username + "\r\n"))
-		log.Printf("Username pattern match: %s \n", bytes.TrimSpace(data))
+		traceLogf("Username pattern match: %s \n", bytes.TrimSpace(data))
 		return AuthPartial
-	} else if c.conf.PasswordRegex.Match(data) {
+	}
+
+	if c.conf.PasswordRegex.Match(data) {
 		_, _ = c.sock.Write([]byte(c.conf.Password + "\r\n"))
-		log.Printf("Password pattern match: %s \n", bytes.TrimSpace(data))
+		traceLogf("Password pattern match: %s \r\n", bytes.TrimSpace(data))
 		return AuthPartial
-	} else if c.conf.LoginSuccessRegex.Match(data) {
-		log.Printf("successPattern match: %s \n", bytes.TrimSpace(data))
+	}
+
+	if c.conf.LoginSuccessRegex.Match(data) {
+		traceLogf("successPattern match: %s \r\n", bytes.TrimSpace(data))
 		return AuthSuccess
-	} else if c.conf.LoginFailureRegex.Match(data) {
-		log.Printf("incorrect pattern match:%s \n", bytes.TrimSpace(data))
+	}
+
+	if c.conf.LoginFailureRegex.Match(data) {
+		traceLogf("incorrect pattern match:%s \r\n", bytes.TrimSpace(data))
 		return AuthFailed
 	}
-	log.Printf("unmatch data: %s \n", bytes.TrimSpace(data))
+
+	traceLog("unmatch data: %s \r\n", bytes.TrimSpace(data))
 	return AuthPartial
 }
 
@@ -97,6 +104,7 @@ loop:
 		for {
 			if packet, remain, ok = ReadOptionPacket(remain); ok {
 				replyPackets = append(replyPackets, c.handleOptionPacket(packet))
+				traceLogf("server: %s ----> client: %s\r\n", packet, replyPackets[len(replyPackets)-1])
 				continue
 			}
 			if len(replyPackets) > 0 {

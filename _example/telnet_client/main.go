@@ -34,6 +34,7 @@ func main() {
 		Password: password,
 		Timeout:  30 * time.Second,
 	}
+	tclientlib.SetMode(tclientlib.DebugMode)
 	client, err := tclientlib.Dial("tcp", net.JoinHostPort(IpAddr, Port), &conf)
 	if err != nil {
 		log.Println(err)
