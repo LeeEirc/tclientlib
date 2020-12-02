@@ -8,6 +8,10 @@ const (
 	WILL = 251
 )
 
+const (
+	MAX_WINDOW_WIDTH  = 1<<16 - 1
+	MAX_WINDOW_HEIGHT = 1<<16 - 1
+)
 
 // 参考 https://www.iana.org/assignments/telnet-options/telnet-options.xhtml
 const (

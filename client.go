@@ -2,6 +2,7 @@ package tclientlib
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -209,14 +210,18 @@ func (c *Client) WindowChange(w, h int) error {
 	if !c.enableWindows {
 		return nil
 	}
+	if w > MAX_WINDOW_WIDTH {
+		w = MAX_WINDOW_WIDTH
+	}
+	if h > MAX_WINDOW_HEIGHT {
+		h = MAX_WINDOW_HEIGHT
+	}
 	var p OptionPacket
 	p.OptionCode = SB
 	p.CommandCode = NAWS
-	params := make([]byte, 0, 4)
-	params = append(params, 0)
-	params = append(params, byte(w))
-	params = append(params, 0)
-	params = append(params, byte(h))
+	params := make([]byte, 4)
+	binary.BigEndian.PutUint16(params[:2], uint16(w))
+	binary.BigEndian.PutUint16(params[2:], uint16(h))
 	p.Parameters = params
 	if err := c.replyOptionPackets(p); err != nil {
 		traceLogf("%s\r\n", err)
