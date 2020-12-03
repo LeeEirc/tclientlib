@@ -176,13 +176,6 @@ func (c *Client) handleOptionPacket(p OptionPacket) OptionPacket {
 		case NAWS:
 			replyPacket.OptionCode = WILL
 			c.enableWindows = true
-			//var extraPacket OptionPacket
-			//extraPacket.CommandCode = p.CommandCode
-			//extraPacket.OptionCode = SB
-			//extraPacket.Parameters = make([]byte, 0)
-			//extraPacket.Parameters = append(extraPacket.Parameters, []byte(fmt.Sprintf("%d%d%d%d",
-			//	0, c.conf.TTYOptions.Wide, 0, c.conf.TTYOptions.High))...)
-			//extraPackets = append(extraPackets, extraPacket)
 			// 窗口大小
 		default:
 			replyPacket.OptionCode = WONT
