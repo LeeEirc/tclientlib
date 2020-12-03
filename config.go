@@ -29,6 +29,8 @@ type Config struct {
 	PasswordRegex     *regexp.Regexp
 	LoginFailureRegex *regexp.Regexp
 	LoginSuccessRegex *regexp.Regexp
+
+	CustomSuccessRegex *regexp.Regexp
 }
 
 func (conf *Config) SetDefaults() {

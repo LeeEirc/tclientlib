@@ -59,16 +59,22 @@ func (c *Client) handleLoginData(data []byte) AuthStatus {
 	}
 
 	if c.conf.LoginSuccessRegex.Match(data) {
-		traceLogf("successPattern match: %s \r\n", bytes.TrimSpace(data))
+		traceLogf("Success pattern match: %s \r\n", bytes.TrimSpace(data))
+		return AuthSuccess
+	}
+
+	if c.conf.CustomSuccessRegex != nil && c.conf.CustomSuccessRegex.Match(data) {
+		traceLogf("Custom success pattern match: %s \r\n",
+			bytes.TrimSpace(data))
 		return AuthSuccess
 	}
 
 	if c.conf.LoginFailureRegex.Match(data) {
-		traceLogf("incorrect pattern match:%s \r\n", bytes.TrimSpace(data))
+		traceLogf("Incorrect pattern match:%s \r\n", bytes.TrimSpace(data))
 		return AuthFailed
 	}
 
-	traceLogf("unmatch data: %s \r\n", bytes.TrimSpace(data))
+	traceLogf("No match data: %s \r\n", bytes.TrimSpace(data))
 	return AuthPartial
 }
 
