@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,8 @@ type Client struct {
 	sock          net.Conn
 	enableWindows bool
 	autoLogin     bool
+
+	mux sync.Mutex
 }
 
 func (c *Client) handshake() error {
@@ -47,13 +50,15 @@ func (c *Client) loginAuthentication() error {
 
 func (c *Client) handleLoginData(data []byte) AuthStatus {
 	if c.conf.UsernameRegex.Match(data) {
-		_, _ = c.sock.Write([]byte(c.conf.Username + "\r\n"))
+		_, _ = c.sock.Write([]byte(c.conf.Username))
+		_, _ = c.sock.Write([]byte{'\r', BINARY})
 		traceLogf("Username pattern match: %s \n", bytes.TrimSpace(data))
 		return AuthPartial
 	}
 
 	if c.conf.PasswordRegex.Match(data) {
-		_, _ = c.sock.Write([]byte(c.conf.Password + "\r\n"))
+		_, _ = c.sock.Write([]byte(c.conf.Password))
+		_, _ = c.sock.Write([]byte{'\r', BINARY})
 		traceLogf("Password pattern match: %s \r\n", bytes.TrimSpace(data))
 		return AuthPartial
 	}
@@ -88,6 +93,8 @@ func (c *Client) replyOptionPackets(opts ...OptionPacket) error {
 }
 
 func (c *Client) Read(p []byte) (int, error) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
 	innerBuf := make([]byte, len(p))
 	var (
 		ok     bool

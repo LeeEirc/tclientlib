@@ -72,26 +72,36 @@ func ConvertSubOptions(commandCode byte, parameters []byte) string {
 }
 
 func ReadOptionPacket(p []byte) (packet OptionPacket, rest []byte, ok bool) {
-	if len(p) == 0 {
+	if len(p) < 3 {
 		return
 	}
-	if p[0] == IAC && len(p) >= 3 {
-		packet.OptionCode = p[1]
-		packet.CommandCode = p[2]
-		switch p[1] {
+	indexIAC := bytes.IndexByte(p, IAC)
+	if indexIAC < 0 {
+		return packet, p, false
+	}
+	rest = make([]byte, 0, len(p))
+	rest = append(rest, p[:indexIAC]...)
+
+	if len(p[indexIAC:]) >= 3 {
+		packet.OptionCode = p[indexIAC+1]
+		packet.CommandCode = p[indexIAC+2]
+		remain := p[indexIAC+3:]
+		switch packet.OptionCode {
 		case WILL, WONT, DO, DONT:
-			return packet, p[3:], true
+			rest = append(rest, remain...)
+			return packet, rest, true
 		case SB:
-			remain := p[3:]
-			index := bytes.IndexByte(remain, SE)
-			if index < 0 {
-				traceLogf("failed index %d %v\r\n", index, remain)
+			indexSE := bytes.IndexByte(remain, SE)
+			if indexSE < 0 {
+				traceLogf("failed index SE %d %v\r\n", indexSE, remain)
 				// ENVIRON valid send no var
-				return packet, remain, true
+				rest = append(rest, remain...)
+				return packet, rest, true
 			}
-			packet.Parameters = make([]byte, len(remain[:index])-1)
-			copy(packet.Parameters, remain[:index])
-			return packet, remain[index+1:], true
+			packet.Parameters = make([]byte, len(remain[:indexSE])-1)
+			copy(packet.Parameters, remain[:indexSE])
+			rest = append(rest, remain[indexSE+1:]...)
+			return packet, rest, true
 		default:
 			traceLogf("failed %v %v\r\n", p[1], p[2:])
 		}
