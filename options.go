@@ -103,7 +103,8 @@ func ReadOptionPacket(p []byte) (packet OptionPacket, rest []byte, ok bool) {
 			rest = append(rest, remain[indexSE+1:]...)
 			return packet, rest, true
 		default:
-			traceLogf("failed %v %v\r\n", p[1], p[2:])
+			traceLogf("failed %v %v %v\r\n", packet.OptionCode,
+				packet.CommandCode, remain)
 		}
 	}
 	return packet, p, false
