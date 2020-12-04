@@ -73,7 +73,7 @@ func ConvertSubOptions(commandCode byte, parameters []byte) string {
 
 func ReadOptionPacket(p []byte) (packet OptionPacket, rest []byte, ok bool) {
 	if len(p) < 3 {
-		return
+		return packet, p, false
 	}
 	indexIAC := bytes.IndexByte(p, IAC)
 	if indexIAC < 0 {
