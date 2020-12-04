@@ -2,6 +2,7 @@ package tclientlib
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"strings"
 )
@@ -51,11 +52,14 @@ func ConvertSubOptions(commandCode byte, parameters []byte) string {
 			}
 			return s.String()
 		}
-		return fmt.Sprintf("%d %d %d %d",
+
+		return fmt.Sprintf("%d %d (%d) %d %d (%d)",
 			parameters[0],
 			parameters[1],
+			binary.BigEndian.Uint16(parameters[:2]),
 			parameters[2],
 			parameters[3],
+			binary.BigEndian.Uint16(parameters[2:]),
 		)
 	default:
 		var builder strings.Builder
