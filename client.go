@@ -18,7 +18,8 @@ type Client struct {
 	enableWindows bool
 	autoLogin     bool
 
-	mux sync.Mutex
+	mux         sync.Mutex
+	loginStatus *status
 }
 
 func (c *Client) handshake() error {
@@ -49,17 +50,19 @@ func (c *Client) loginAuthentication() error {
 }
 
 func (c *Client) handleLoginData(data []byte) AuthStatus {
-	if c.conf.UsernameRegex.Match(data) {
+	if !c.loginStatus.usernameDone && c.conf.UsernameRegex.Match(data) {
 		_, _ = c.sock.Write([]byte(c.conf.Username))
 		_, _ = c.sock.Write([]byte{'\r', BINARY})
-		traceLogf("Username pattern match: %s \n", bytes.TrimSpace(data))
+		traceLogf("Username pattern match: %s \r\n", bytes.TrimSpace(data))
+		c.loginStatus.usernameDone = true
 		return AuthPartial
 	}
 
-	if c.conf.PasswordRegex.Match(data) {
+	if !c.loginStatus.passwordDone && c.conf.PasswordRegex.Match(data) {
 		_, _ = c.sock.Write([]byte(c.conf.Password))
 		_, _ = c.sock.Write([]byte{'\r', BINARY})
 		traceLogf("Password pattern match: %s \r\n", bytes.TrimSpace(data))
+		c.loginStatus.passwordDone = true
 		return AuthPartial
 	}
 
@@ -70,6 +73,8 @@ func (c *Client) handleLoginData(data []byte) AuthStatus {
 
 	if c.conf.LoginFailureRegex.Match(data) {
 		traceLogf("Incorrect pattern match:%s \r\n", bytes.TrimSpace(data))
+		c.loginStatus.usernameDone = false
+		c.loginStatus.passwordDone = false
 		return AuthFailed
 	}
 
@@ -252,6 +257,10 @@ func NewClientConn(conn net.Conn, config *Config) (*Client, error) {
 		sock:      conn,
 		conf:      &fullConf,
 		autoLogin: autoLogin,
+		loginStatus: &status{
+			usernameDone: false,
+			passwordDone: false,
+		},
 	}
 	if err := client.handshake(); err != nil {
 		_ = conn.Close()
