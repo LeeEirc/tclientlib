@@ -52,18 +52,18 @@ func (conf *Config) SetDefaults() {
 		}
 	}
 	if conf.UsernameRegex == nil {
-		conf.UsernameRegex = usernamePattern
+		conf.UsernameRegex = DefaultUsernamePattern
 	}
 
 	if conf.PasswordRegex == nil {
-		conf.PasswordRegex = passwordPattern
+		conf.PasswordRegex = DefaultPasswordPattern
 	}
 
 	if conf.LoginSuccessRegex == nil {
-		conf.LoginSuccessRegex = defaultLoginSuccessPattern
+		conf.LoginSuccessRegex = DefaultLoginSuccessPattern
 	}
 	if conf.LoginFailureRegex == nil {
-		conf.LoginFailureRegex = defaultLoginFailedPattern
+		conf.LoginFailureRegex = DefaultLoginFailedPattern
 	}
 }
 

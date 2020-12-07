@@ -55,17 +55,17 @@ var CodeTOASCII = map[byte]string{
 }
 
 const (
-	loginRegs          = "(?i)login:?\\s*$|username:?\\s*$|name:?\\s*$|用户名:?\\s*$|账\\s*号:?\\s*$|user:?\\s*$"
-	passwordRegs       = "(?i)Password:?\\s*$|ssword:?\\s*$|passwd:?\\s*$|密\\s*码:?\\s*$"
-	FailedRegs         = "(?i)incorrect|failed|失败|错误"
-	DefaultSuccessRegs = "(?i)Last\\s*login|success|成功|#|>|\\$"
+	usernameRegs     = "(?i)login:?\\s*$|username:?\\s*$|name:?\\s*$|用户名:?\\s*$|账\\s*号:?\\s*$|user:?\\s*$"
+	passwordRegs     = "(?i)Password:?\\s*$|ssword:?\\s*$|passwd:?\\s*$|密\\s*码:?\\s*$"
+	loginFailedRegs  = "(?i)incorrect|failed|失败|错误"
+	loginSuccessRegs = "(?i)Last\\s*login|success|成功|#|>|\\$"
 )
 
 var (
-	usernamePattern, _            = regexp.Compile(loginRegs)
-	passwordPattern, _            = regexp.Compile(passwordRegs)
-	defaultLoginFailedPattern, _  = regexp.Compile(FailedRegs)
-	defaultLoginSuccessPattern, _ = regexp.Compile(DefaultSuccessRegs)
+	DefaultUsernamePattern     = regexp.MustCompile(usernameRegs)
+	DefaultPasswordPattern     = regexp.MustCompile(passwordRegs)
+	DefaultLoginFailedPattern  = regexp.MustCompile(loginFailedRegs)
+	DefaultLoginSuccessPattern = regexp.MustCompile(loginSuccessRegs)
 )
 
 type AuthStatus int
