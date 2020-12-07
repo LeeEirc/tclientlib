@@ -30,7 +30,6 @@ type Config struct {
 	LoginFailureRegex *regexp.Regexp
 	LoginSuccessRegex *regexp.Regexp
 
-	CustomSuccessRegex *regexp.Regexp
 }
 
 func (conf *Config) SetDefaults() {
