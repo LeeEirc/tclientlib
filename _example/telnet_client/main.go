@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/LeeEirc/tclientlib"
 )
 
@@ -40,6 +42,14 @@ func main() {
 		log.Println(err)
 		os.Exit(1)
 	}
+	fd := int(os.Stdin.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+
+	defer term.Restore(fd, state)
 	sigChan := make(chan struct{}, 1)
 
 	go func() {

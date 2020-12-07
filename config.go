@@ -66,3 +66,8 @@ func (conf *Config) SetDefaults() {
 		conf.LoginFailureRegex = defaultLoginFailedPattern
 	}
 }
+
+type status struct {
+	usernameDone bool
+	passwordDone bool
+}
