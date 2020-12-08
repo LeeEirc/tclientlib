@@ -31,17 +31,6 @@ func init() {
 
 func main() {
 	flag.Parse()
-	conf := tclientlib.Config{
-		Username: username,
-		Password: password,
-		Timeout:  30 * time.Second,
-	}
-	tclientlib.SetMode(tclientlib.DebugMode)
-	client, err := tclientlib.Dial("tcp", net.JoinHostPort(IpAddr, Port), &conf)
-	if err != nil {
-		log.Println(err)
-		os.Exit(1)
-	}
 	fd := int(os.Stdin.Fd())
 	state, err := term.MakeRaw(fd)
 	if err != nil {
@@ -50,6 +39,24 @@ func main() {
 	}
 
 	defer term.Restore(fd, state)
+
+	w, h, _ := term.GetSize(fd)
+	conf := tclientlib.Config{
+		Username: username,
+		Password: password,
+		Timeout:  30 * time.Second,
+		TTYOptions: &tclientlib.TerminalOptions{
+			Wide: w,
+			High: h,
+		},
+	}
+	tclientlib.SetMode(tclientlib.DebugMode)
+	client, err := tclientlib.Dial("tcp", net.JoinHostPort(IpAddr, Port), &conf)
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+
 	sigChan := make(chan struct{}, 1)
 
 	go func() {
@@ -73,6 +80,8 @@ func main() {
 			if sigwinch == nil {
 				return
 			}
+			w, h, _ := term.GetSize(fd)
+			err := client.WindowChange(w, h)
 			if err != nil {
 				log.Println("Unable to send window-change request.")
 				continue

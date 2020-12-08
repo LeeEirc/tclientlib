@@ -115,8 +115,9 @@ loop:
 
 		for {
 			if packet, remain, ok = ReadOptionPacket(remain); ok {
-				replyPackets = append(replyPackets, c.handleOptionPacket(packet))
-				traceLogf("server: %s ----> client: %s\r\n", packet, replyPackets[len(replyPackets)-1])
+				optPackets := c.handleOptionPacket(packet)
+				replyPackets = append(replyPackets, optPackets...)
+				traceLogf("server: %s ----> client: %s\r\n", packet, optPackets)
 				continue
 			}
 			if len(replyPackets) > 0 {
@@ -135,7 +136,7 @@ loop:
 	return copy(p, remain), err
 }
 
-func (c *Client) handleOptionPacket(p OptionPacket) OptionPacket {
+func (c *Client) handleOptionPacket(p OptionPacket) []OptionPacket {
 	var (
 		replyPacket OptionPacket
 	)
@@ -170,6 +171,8 @@ func (c *Client) handleOptionPacket(p OptionPacket) OptionPacket {
 				default:
 					replyPacket.OptionCode = WONT
 				}
+			default:
+				replyPacket.OptionCode = WONT
 			}
 		} else {
 			replyPacket.OptionCode = WONT
@@ -183,6 +186,14 @@ func (c *Client) handleOptionPacket(p OptionPacket) OptionPacket {
 			replyPacket.OptionCode = WILL
 			c.enableWindows = true
 			// 窗口大小
+			var subOpt OptionPacket
+			subOpt.OptionCode = SB
+			subOpt.CommandCode = NAWS
+			params := make([]byte, 4)
+			binary.BigEndian.PutUint16(params[:2], uint16(c.conf.TTYOptions.Wide))
+			binary.BigEndian.PutUint16(params[2:], uint16(c.conf.TTYOptions.High))
+			subOpt.Parameters = params
+			return []OptionPacket{replyPacket, subOpt}
 		default:
 			replyPacket.OptionCode = WONT
 		}
@@ -200,7 +211,7 @@ func (c *Client) handleOptionPacket(p OptionPacket) OptionPacket {
 	default:
 		traceLogf("match option code unknown: %b\r\n", p.OptionCode)
 	}
-	return replyPacket
+	return []OptionPacket{replyPacket}
 }
 
 func (c *Client) Write(b []byte) (int, error) {
