@@ -93,18 +93,17 @@ func ReadOptionPacket(p []byte) (packet OptionPacket, rest []byte, ok bool) {
 		case SB:
 			indexSE := bytes.IndexByte(remain, SE)
 			if indexSE < 0 {
-				traceLogf("failed index SE %d %v\r\n", indexSE, remain)
+				traceLogf("failed index SE: packet(%s) %v\r\n", packet, remain)
 				// ENVIRON valid send no var
 				rest = append(rest, remain...)
-				return packet, rest, true
+				return packet, p, false
 			}
 			packet.Parameters = make([]byte, len(remain[:indexSE])-1)
 			copy(packet.Parameters, remain[:indexSE])
 			rest = append(rest, remain[indexSE+1:]...)
 			return packet, rest, true
 		default:
-			traceLogf("failed %v %v %v\r\n", packet.OptionCode,
-				packet.CommandCode, remain)
+			traceLogf("failed found packet %s %v\r\n", packet, remain)
 		}
 	}
 	return packet, p, false

@@ -111,8 +111,7 @@ loop:
 			traceLogf("%s\r\n", err)
 			return 0, err
 		}
-		remain = innerBuf[:nr]
-
+		remain = append(remain, innerBuf[:nr]...)
 		for {
 			if packet, remain, ok = ReadOptionPacket(remain); ok {
 				optPackets := c.handleOptionPacket(packet)
@@ -120,17 +119,19 @@ loop:
 				traceLogf("server: %s ----> client: %s\r\n", packet, optPackets)
 				continue
 			}
-			if len(replyPackets) > 0 {
-				if err := c.replyOptionPackets(replyPackets...); err != nil {
-					traceLogf("%s\r\n", err)
-					return 0, err
-				}
+			if packet.OptionCode != 0 {
+				goto loop
 			}
-			replyPackets = replyPackets[:0]
 			if len(remain) == 0 {
 				goto loop
 			}
 			break loop
+		}
+	}
+	if len(replyPackets) > 0 {
+		if err := c.replyOptionPackets(replyPackets...); err != nil {
+			traceLogf("%s\r\n", err)
+			return 0, err
 		}
 	}
 	return copy(p, remain), err
