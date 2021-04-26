@@ -122,7 +122,7 @@ loop:
 			if packet.OptionCode != 0 {
 				goto loop
 			}
-			if len(remain) == 0 {
+			if len(remain) == 0 && len(replyPackets) == 0 {
 				goto loop
 			}
 			break loop
