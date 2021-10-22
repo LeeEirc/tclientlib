@@ -103,7 +103,6 @@ func (c *Client) Read(p []byte) (int, error) {
 		remain []byte
 	)
 	// 劫持解析option的包，过滤处理 option packet
-	replyPackets := make([]OptionPacket, 0, 5)
 loop:
 	for {
 		nr, err = c.sock.Read(innerBuf)
@@ -115,23 +114,17 @@ loop:
 		for {
 			if packet, remain, ok = ReadOptionPacket(remain); ok {
 				optPackets := c.handleOptionPacket(packet)
-				replyPackets = append(replyPackets, optPackets...)
+				if err = c.replyOptionPackets(optPackets...); err != nil {
+					traceLogf("%s\r\n", err)
+					return 0, err
+				}
 				traceLogf("server: %s ----> client: %s\r\n", packet, optPackets)
 				continue
 			}
-			if packet.OptionCode != 0 {
-				goto loop
-			}
-			if len(remain) == 0 && len(replyPackets) == 0 {
+			if packet.OptionCode != 0 || len(remain) == 0 {
 				goto loop
 			}
 			break loop
-		}
-	}
-	if len(replyPackets) > 0 {
-		if err := c.replyOptionPackets(replyPackets...); err != nil {
-			traceLogf("%s\r\n", err)
-			return 0, err
 		}
 	}
 	return copy(p, remain), err
