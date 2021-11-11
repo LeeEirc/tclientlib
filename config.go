@@ -25,11 +25,12 @@ type Config struct {
 	Timeout    time.Duration
 	TTYOptions *TerminalOptions
 
-	UsernameRegex     *regexp.Regexp
-	PasswordRegex     *regexp.Regexp
-	LoginFailureRegex *regexp.Regexp
-	LoginSuccessRegex *regexp.Regexp
+	UsernameRegex       *regexp.Regexp
+	PasswordRegex       *regexp.Regexp
+	BuiltinFailureRegex *regexp.Regexp
+	BuiltinSuccessRegex *regexp.Regexp
 
+	LoginSuccessRegex *regexp.Regexp
 }
 
 func (conf *Config) SetDefaults() {
@@ -59,11 +60,11 @@ func (conf *Config) SetDefaults() {
 		conf.PasswordRegex = DefaultPasswordPattern
 	}
 
-	if conf.LoginSuccessRegex == nil {
-		conf.LoginSuccessRegex = DefaultLoginSuccessPattern
+	if conf.BuiltinSuccessRegex == nil {
+		conf.BuiltinSuccessRegex = DefaultLoginSuccessPattern
 	}
-	if conf.LoginFailureRegex == nil {
-		conf.LoginFailureRegex = DefaultLoginFailedPattern
+	if conf.BuiltinFailureRegex == nil {
+		conf.BuiltinFailureRegex = DefaultLoginFailedPattern
 	}
 }
 
