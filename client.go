@@ -42,12 +42,14 @@ func (c *Client) loginAuthentication() error {
 			_, _ = c.Write([]byte("\r\n"))
 			return nil
 		case AuthFailed:
-			return errors.New("failed login")
+			return ErrFailedLogin
 		default:
 			continue
 		}
 	}
 }
+
+var ErrFailedLogin = errors.New("failed login")
 
 func (c *Client) handleLoginData(data []byte) AuthStatus {
 	if !c.loginStatus.usernameDone && c.conf.UsernameRegex.Match(data) {
@@ -66,12 +68,17 @@ func (c *Client) handleLoginData(data []byte) AuthStatus {
 		return AuthPartial
 	}
 
-	if c.conf.LoginSuccessRegex.Match(data) {
+	if c.conf.BuiltinSuccessRegex.Match(data) {
 		traceLogf("Success pattern match: %s \r\n", bytes.TrimSpace(data))
 		return AuthSuccess
 	}
 
-	if c.conf.LoginFailureRegex.Match(data) {
+	if c.conf.LoginSuccessRegex != nil && c.conf.LoginSuccessRegex.Match(data) {
+		traceLogf("Success pattern match: %s \r\n", bytes.TrimSpace(data))
+		return AuthSuccess
+	}
+
+	if c.conf.BuiltinFailureRegex.Match(data) {
 		traceLogf("Incorrect pattern match:%s \r\n", bytes.TrimSpace(data))
 		c.loginStatus.usernameDone = false
 		c.loginStatus.passwordDone = false
