@@ -57,7 +57,7 @@ var CodeTOASCII = map[byte]string{
 const (
 	usernameRegs     = "(?i)login:?\\s*$|username:?\\s*$|name:?\\s*$|用户名:?\\s*$|账\\s*号:?\\s*$|user:?\\s*$"
 	passwordRegs     = "(?i)Password:?\\s*$|ssword:?\\s*$|passwd:?\\s*$|密\\s*码:?\\s*$"
-	loginFailedRegs  = "(?i)incorrect|failed|失败|错误"
+	loginFailedRegs  = "(?i)incorrect|failed|username\\s*or\\s*password\\s*error|失败|错误"
 	loginSuccessRegs = "(?i)Last\\s*login|login\\s*time|success|成功|#|>|\\$"
 )
 
