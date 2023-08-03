@@ -74,4 +74,5 @@ const (
 	AuthSuccess AuthStatus = iota
 	AuthPartial
 	AuthFailed
+	AUTHUnknown
 )

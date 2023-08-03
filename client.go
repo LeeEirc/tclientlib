@@ -6,11 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
 
 const defaultTimeout = time.Second * 15
+
+type Log func(format string, v ...interface{})
+
+var defaultStdoutF Log = func(format string, v ...interface{}) {
+	if !strings.HasSuffix(format, "\r\n") {
+		format += "\r\n"
+	}
+	fmt.Printf(format, v...)
+}
 
 type Client struct {
 	conf          *Config
@@ -20,6 +31,7 @@ type Client struct {
 
 	mux         sync.Mutex
 	loginStatus *status
+	LogF        Log
 }
 
 func (c *Client) handshake() error {
@@ -31,18 +43,23 @@ func (c *Client) handshake() error {
 
 func (c *Client) loginAuthentication() error {
 	buf := make([]byte, 1024)
+	receivedBuf := bytes.NewBuffer(make([]byte, 0, 1024*2))
+	defer receivedBuf.Reset()
 	for {
 		nr, err := c.Read(buf)
 		if err != nil {
 			return err
 		}
-		result := c.handleLoginData(buf[:nr])
+		receivedBuf.Write(buf[:nr])
+		result := c.handleLoginData(receivedBuf.Bytes())
 		switch result {
 		case AuthSuccess:
 			_, _ = c.Write([]byte("\r\n"))
 			return nil
 		case AuthFailed:
 			return ErrFailedLogin
+		case AuthPartial:
+			receivedBuf.Reset()
 		default:
 			continue
 		}
@@ -52,41 +69,61 @@ func (c *Client) loginAuthentication() error {
 var ErrFailedLogin = errors.New("failed login")
 
 func (c *Client) handleLoginData(data []byte) AuthStatus {
-	if !c.loginStatus.usernameDone && c.conf.UsernameRegex.Match(data) {
-		_, _ = c.sock.Write([]byte(c.conf.Username))
-		_, _ = c.sock.Write([]byte{'\r', BINARY})
-		traceLogf("Username pattern match: %s \r\n", bytes.TrimSpace(data))
-		c.loginStatus.usernameDone = true
+	if !c.loginStatus.usernameDone {
+		usernameRes := []*regexp.Regexp{
+			c.conf.BuiltinUsernamePromptRegex,
+			c.conf.UsernamePromptRegex,
+		}
+		for i := range usernameRes {
+			if usernameRes[i] != nil && usernameRes[i].Match(data) {
+				_, _ = c.sock.Write([]byte(c.conf.Username))
+				_, _ = c.sock.Write([]byte{'\r', BINARY})
+				c.LogF("Username pattern match: %s", bytes.TrimSpace(data))
+				c.loginStatus.usernameDone = true
+				return AuthPartial
+			}
+		}
+	}
+
+	if !c.loginStatus.passwordDone {
+		passwordRes := []*regexp.Regexp{
+			c.conf.BuiltinPasswordPromptRegex,
+			c.conf.PasswordPromptRegex,
+		}
+		for i := range passwordRes {
+			if passwordRes[i] != nil && passwordRes[i].Match(data) {
+				_, _ = c.sock.Write([]byte(c.conf.Password))
+				_, _ = c.sock.Write([]byte{'\r', BINARY})
+				c.LogF("Password pattern match: %s", bytes.TrimSpace(data))
+				c.loginStatus.passwordDone = true
+				return AuthPartial
+			}
+		}
+
 		return AuthPartial
 	}
 
-	if !c.loginStatus.passwordDone && c.conf.PasswordRegex.Match(data) {
-		_, _ = c.sock.Write([]byte(c.conf.Password))
-		_, _ = c.sock.Write([]byte{'\r', BINARY})
-		traceLogf("Password pattern match: %s \r\n", bytes.TrimSpace(data))
-		c.loginStatus.passwordDone = true
-		return AuthPartial
+	successRes := []*regexp.Regexp{
+		c.conf.BuiltinSuccessPromptRegex,
+		c.conf.LoginSuccessPromptRegex,
 	}
 
-	if c.conf.BuiltinSuccessRegex.Match(data) {
-		traceLogf("Success pattern match: %s \r\n", bytes.TrimSpace(data))
-		return AuthSuccess
-	}
-
-	if c.conf.LoginSuccessRegex != nil && c.conf.LoginSuccessRegex.Match(data) {
-		traceLogf("Success pattern match: %s \r\n", bytes.TrimSpace(data))
-		return AuthSuccess
+	for i := range successRes {
+		if successRes[i] != nil && successRes[i].Match(data) {
+			c.LogF("Success pattern match: %s", bytes.TrimSpace(data))
+			return AuthSuccess
+		}
 	}
 
 	if c.conf.BuiltinFailureRegex.Match(data) {
-		traceLogf("Incorrect pattern match:%s \r\n", bytes.TrimSpace(data))
+		c.LogF("Incorrect pattern match:%s", bytes.TrimSpace(data))
 		c.loginStatus.usernameDone = false
 		c.loginStatus.passwordDone = false
 		return AuthFailed
 	}
 
-	traceLogf("No match data: %s \r\n", bytes.TrimSpace(data))
-	return AuthPartial
+	c.LogF("No match data: %s", bytes.TrimSpace(data))
+	return AUTHUnknown
 }
 
 func (c *Client) replyOptionPackets(opts ...OptionPacket) error {
@@ -114,7 +151,7 @@ loop:
 	for {
 		nr, err = c.sock.Read(innerBuf)
 		if err != nil {
-			traceLogf("%s\r\n", err)
+			c.LogF("[Telnet client] read err: %s", err)
 			return 0, err
 		}
 		remain = append(remain, innerBuf[:nr]...)
@@ -122,10 +159,10 @@ loop:
 			if packet, remain, ok = ReadOptionPacket(remain); ok {
 				optPackets := c.handleOptionPacket(packet)
 				if err = c.replyOptionPackets(optPackets...); err != nil {
-					traceLogf("%s\r\n", err)
+					c.LogF("[Telnet client] reply packets err %s", err)
 					return 0, err
 				}
-				traceLogf("server: %s ----> client: %s\r\n", packet, optPackets)
+				traceLogf("[Telnet client] server: %s ----> client: %s\r\n", packet, optPackets)
 				continue
 			}
 			if packet.OptionCode != 0 || len(remain) == 0 {
@@ -210,7 +247,7 @@ func (c *Client) handleOptionPacket(p OptionPacket) []OptionPacket {
 	case WONT:
 		replyPacket.OptionCode = DONT
 	default:
-		traceLogf("match option code unknown: %b\r\n", p.OptionCode)
+		c.LogF("match option code unknown: %b", p.OptionCode)
 	}
 	return []OptionPacket{replyPacket}
 }
@@ -241,7 +278,7 @@ func (c *Client) WindowChange(w, h int) error {
 	binary.BigEndian.PutUint16(params[2:], uint16(h))
 	p.Parameters = params
 	if err := c.replyOptionPackets(p); err != nil {
-		traceLogf("%s\r\n", err)
+		c.LogF("[Telnet client] window change %s", err)
 		return err
 	}
 	c.conf.TTYOptions.Wide = w
@@ -258,7 +295,15 @@ func Dial(network, addr string, config *Config) (*Client, error) {
 	return NewClientConn(conn, config)
 }
 
-func NewClientConn(conn net.Conn, config *Config) (*Client, error) {
+func WithLogger(log Log) Opt {
+	return func(client *Client) {
+		client.LogF = log
+	}
+}
+
+type Opt func(*Client)
+
+func NewClientConn(conn net.Conn, config *Config, opts ...Opt) (*Client, error) {
 	fullConf := *config
 	fullConf.SetDefaults()
 	var autoLogin bool
@@ -273,6 +318,10 @@ func NewClientConn(conn net.Conn, config *Config) (*Client, error) {
 			usernameDone: false,
 			passwordDone: false,
 		},
+	}
+	client.LogF = defaultStdoutF
+	for _, opt := range opts {
+		opt(client)
 	}
 	if err := client.handshake(); err != nil {
 		_ = conn.Close()
