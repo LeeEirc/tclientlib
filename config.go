@@ -25,12 +25,14 @@ type Config struct {
 	Timeout    time.Duration
 	TTYOptions *TerminalOptions
 
-	UsernameRegex       *regexp.Regexp
-	PasswordRegex       *regexp.Regexp
-	BuiltinFailureRegex *regexp.Regexp
-	BuiltinSuccessRegex *regexp.Regexp
+	UsernamePromptRegex     *regexp.Regexp
+	PasswordPromptRegex     *regexp.Regexp
+	LoginSuccessPromptRegex *regexp.Regexp
 
-	LoginSuccessRegex *regexp.Regexp
+	BuiltinUsernamePromptRegex *regexp.Regexp
+	BuiltinPasswordPromptRegex *regexp.Regexp
+	BuiltinSuccessPromptRegex  *regexp.Regexp
+	BuiltinFailureRegex        *regexp.Regexp
 }
 
 func (conf *Config) SetDefaults() {
@@ -52,20 +54,19 @@ func (conf *Config) SetDefaults() {
 			opts.TermType = "xterm"
 		}
 	}
-	if conf.UsernameRegex == nil {
-		conf.UsernameRegex = DefaultUsernamePattern
+	if conf.BuiltinUsernamePromptRegex == nil {
+		conf.BuiltinUsernamePromptRegex = DefaultUsernamePattern
 	}
-
-	if conf.PasswordRegex == nil {
-		conf.PasswordRegex = DefaultPasswordPattern
+	if conf.BuiltinPasswordPromptRegex == nil {
+		conf.BuiltinPasswordPromptRegex = DefaultPasswordPattern
 	}
-
-	if conf.BuiltinSuccessRegex == nil {
-		conf.BuiltinSuccessRegex = DefaultLoginSuccessPattern
+	if conf.BuiltinSuccessPromptRegex == nil {
+		conf.BuiltinSuccessPromptRegex = DefaultLoginSuccessPattern
 	}
 	if conf.BuiltinFailureRegex == nil {
 		conf.BuiltinFailureRegex = DefaultLoginFailedPattern
 	}
+
 }
 
 type status struct {
