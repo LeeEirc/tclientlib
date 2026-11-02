@@ -1,6 +1,7 @@
 package tclientlib
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net"
@@ -58,15 +59,19 @@ func newClientConn(conn net.Conn, config clientConfig) (*Client, error) {
 		}
 	}
 
+	// Keep the same buffered reader for login and the interactive session. Login
+	// reads only through the matched prompt, so bytes that arrived in the same
+	// transport read after that prompt remain available to Client.Read.
+	bufferedReader := bufio.NewReaderSize(reader, 4096)
 	client := &Client{
 		conn:      conn,
 		transport: transport,
-		reader:    reader,
+		reader:    bufferedReader,
 		writer:    writer,
 	}
 	if config.User != "" || config.Password != "" {
 		transport.setTraceRedaction(true)
-		err := login(conn, reader, writer, config, transport.trace)
+		err := login(conn, bufferedReader, writer, config, transport.trace)
 		transport.setTraceRedaction(false)
 		if err != nil {
 			_ = client.Close()
