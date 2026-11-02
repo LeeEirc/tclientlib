@@ -30,12 +30,14 @@ type ClientConfig struct {
 	// Prompt expressions replace the built-in expression for that event. They
 	// are matched against one normalized logical line and must match the entire
 	// line. ShellPrompt describes the final interactive prompt, not a success
-	// message in a login banner.
+	// message in a login banner. ContinuePrompt describes an intermediate prompt
+	// that should receive an Enter key before login continues.
 	UsernamePrompt       *regexp.Regexp
 	PasswordPrompt       *regexp.Regexp
 	ShellPrompt          *regexp.Regexp
 	FailurePrompt        *regexp.Regexp
 	PasswordChangePrompt *regexp.Regexp
+	ContinuePrompt       *regexp.Regexp
 
 	// WrapStream optionally wraps the decoded Telnet application stream before
 	// login and before it is exposed through Client.Read and Client.Write. It is
