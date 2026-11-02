@@ -22,6 +22,7 @@ type ClientConfig struct {
     ShellPrompt          *regexp.Regexp
     FailurePrompt        *regexp.Regexp
     PasswordChangePrompt *regexp.Regexp
+    ContinuePrompt       *regexp.Regexp
 
     WrapStream func(io.Reader, io.Writer) (io.Reader, io.Writer)
     Trace      io.Writer
@@ -90,6 +91,24 @@ Telnet does not define an authentication protocol. The client therefore treats
 login as a small expect-style state machine instead of searching an entire
 banner for broad success or failure words.
 
+The state machine keeps authentication decisions strict while allowing common
+prompt wording:
+
+- username prompts include forms such as `Login:`, `Enter username:`,
+  `Please enter your username:`, and `Login as:`;
+- password prompts include `Password:`, `Password for admin:`,
+  `Please input your password:`, and `Password (required):`;
+- default shell detection supports common Unix and network-device forms such as
+  `router#`, `my device #`, `host%`, `switch(config)#`, `<HUAWEI>`,
+  `[HUAWEI]`, and `[user@host ~]$`;
+- explicit failures may include a bounded suffix such as `please try again` or
+  `please retry`, while login-history counters remain ordinary banners;
+- prompts such as `Press RETURN to get started!` and `Press ENTER to continue`
+  receive an Enter key and then continue waiting for the real shell prompt.
+
+Automatic continuation is limited to three responses per connection, preventing
+a malformed or hostile endpoint from causing an infinite response loop.
+
 Before matching, login output is normalized into logical terminal lines:
 
 - Telnet framing has already been removed;
@@ -98,19 +117,24 @@ Before matching, login output is normalized into logical terminal lines:
 - backspace and carriage-return overwrite behavior is applied;
 - common ANSI CSI and OSC sequences are removed.
 
-Username, password, shell, failure, and password-change expressions are matched
-against one normalized line. A custom expression replaces the built-in
-expression for that event and must match the complete line. `ShellPrompt`
-represents the final interactive prompt, such as `router#`, `switch>`, or
-`user@host:~$`; login-history text such as `Last login`, `success`, or `成功` is
-not considered proof of authentication.
+Username, password, shell, failure, password-change, and continuation
+expressions are matched against one normalized line. A custom expression
+replaces the built-in expression for that event and must match the complete
+line. `ShellPrompt` represents the final interactive prompt, not a success
+message in a banner. Text such as `Last login`, `Login successful`, or `成功`
+is not considered proof of authentication.
 
 For example:
 
 ```go
 config.ShellPrompt = regexp.MustCompile(`(?:<[^>]+>|router(?:\([^)]*\))?[#>])`)
 config.FailurePrompt = regexp.MustCompile(`(?:Login incorrect|Access denied)`)
+config.ContinuePrompt = regexp.MustCompile(`Press Enter to open the console`)
 ```
+
+Built-in username and password prompts deliberately require prompt punctuation.
+An unusual device that emits a bare prompt without `:` or `：` should provide a
+platform-specific expression rather than making the global fallback ambiguous.
 
 When the remote side requires a password change, constructors return an error
 that matches `ErrPasswordChangeRequired`:
@@ -122,7 +146,11 @@ if errors.Is(err, tclientlib.ErrPasswordChangeRequired) {
 }
 ```
 
-The library deliberately does not choose or submit a new password.
+The built-in password-change matcher recognizes direct requirements such as
+`Your password has expired`, `Current UNIX password:`, `New password:`, and
+`Retype new password:`. Informational text such as `Your password will expire in
+7 days` or `Password expired policy: disabled` remains a banner. The library
+deliberately does not choose or submit a new password.
 
 ## Charset conversion
 
