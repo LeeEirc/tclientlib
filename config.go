@@ -27,6 +27,11 @@ type ClientConfig struct {
 	Width        int
 	Height       int
 
+	// LineEnding controls the terminator used by automatic username, password,
+	// and continue responses. Its zero value is LineEndingCRLF. Client.Write is
+	// not rewritten and remains an application-data writer.
+	LineEnding LineEnding
+
 	// Prompt expressions replace the built-in expression for that event. They
 	// are matched against one normalized logical line and must match the entire
 	// line. ShellPrompt describes the final interactive prompt, not a success
@@ -46,8 +51,8 @@ type ClientConfig struct {
 
 	// Trace receives line-oriented diagnostics for raw wire traffic, decoded
 	// application data, Telnet negotiation, and login state transitions. It is
-	// disabled when nil. Outgoing login data is redacted, but received terminal
-	// output and post-login commands may still contain sensitive information.
+	// disabled when nil. Both directions are redacted during initial login, but
+	// post-login commands and terminal output may still contain sensitive data.
 	Trace io.Writer
 }
 
@@ -98,6 +103,9 @@ func prepareConfig(config *ClientConfig) (clientConfig, error) {
 	}
 	if full.Height == 0 {
 		full.Height = defaultHeight
+	}
+	if !full.LineEnding.valid() {
+		return clientConfig{}, fmt.Errorf("%w: line ending %d", ErrInvalidConfig, full.LineEnding)
 	}
 	if full.Width < 0 || full.Height < 0 {
 		return clientConfig{}, fmt.Errorf("%w: %dx%d", ErrInvalidWindowSize, full.Width, full.Height)
