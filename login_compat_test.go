@@ -20,7 +20,9 @@ func TestCompatibleCredentialPromptVariants(t *testing.T) {
 	}
 	for _, prompt := range usernamePrompts {
 		t.Run("username-"+prompt, func(t *testing.T) {
-			config, err := prepareConfig(&ClientConfig{User: "admin"})
+			config, err := prepareConfig(&ClientConfig{
+				User: "admin", LineEnding: LineEndingCRNUL,
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -46,7 +48,9 @@ func TestCompatibleCredentialPromptVariants(t *testing.T) {
 	}
 	for _, prompt := range passwordPrompts {
 		t.Run("password-"+prompt, func(t *testing.T) {
-			config, err := prepareConfig(&ClientConfig{Password: "secret"})
+			config, err := prepareConfig(&ClientConfig{
+				Password: "secret", LineEnding: LineEndingCRNUL,
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,6 +117,7 @@ func TestContinuePromptSendsEnterAndCompletesLogin(t *testing.T) {
 
 	client, err := NewClientConn(conn, &ClientConfig{
 		User: "admin", Password: "secret", Timeout: time.Second,
+		LineEnding: LineEndingCRNUL,
 	})
 	if client != nil {
 		_ = client.Close()
@@ -126,7 +131,9 @@ func TestContinuePromptSendsEnterAndCompletesLogin(t *testing.T) {
 }
 
 func TestContinuePromptResponseIsBounded(t *testing.T) {
-	config, err := prepareConfig(&ClientConfig{Password: "secret"})
+	config, err := prepareConfig(&ClientConfig{
+		Password: "secret", LineEnding: LineEndingCRNUL,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,8 +285,8 @@ func TestPasswordChangeNarrativesArePrecise(t *testing.T) {
 
 func TestCustomContinuePromptReplacesDefault(t *testing.T) {
 	config, err := prepareConfig(&ClientConfig{
-		Password:       "secret",
-		ContinuePrompt: regexp.MustCompile(`GO`),
+		Password: "secret", ContinuePrompt: regexp.MustCompile(`GO`),
+		LineEnding: LineEndingCRNUL,
 	})
 	if err != nil {
 		t.Fatal(err)
