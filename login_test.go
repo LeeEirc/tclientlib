@@ -99,6 +99,7 @@ func TestNewPasswordPromptDoesNotReceiveManagedPassword(t *testing.T) {
 
 	_, err := NewClientConn(conn, &ClientConfig{
 		User: "admin", Password: "secret", Timeout: 250 * time.Millisecond,
+		LineEnding: LineEndingCRNUL,
 	})
 	if !errors.Is(err, ErrPasswordChangeRequired) {
 		t.Fatalf("got %v, want ErrPasswordChangeRequired", err)
@@ -144,7 +145,7 @@ func TestSuccessTextWithoutShellPromptDoesNotAuthenticate(t *testing.T) {
 	}()
 
 	_, err := NewClientConn(conn, &ClientConfig{
-		Password: "secret", Timeout: 30 * time.Millisecond,
+		Password: "secret", Timeout: 30 * time.Millisecond, LineEnding: LineEndingCRNUL,
 	})
 	if !errors.Is(err, ErrLoginTimeout) {
 		t.Fatalf("got %v, want ErrLoginTimeout", err)
@@ -200,6 +201,7 @@ func TestLoginPromptNormalization(t *testing.T) {
 
 				client, err := NewClientConn(conn, &ClientConfig{
 					Password: "secret", Timeout: 250 * time.Millisecond,
+					LineEnding: LineEndingCRNUL,
 				})
 				if client != nil {
 					_ = client.Close()
@@ -217,8 +219,8 @@ func TestLoginPromptNormalization(t *testing.T) {
 
 func TestCustomPromptReplacesDefaultAndMatchesWholeLine(t *testing.T) {
 	config, err := prepareConfig(&ClientConfig{
-		User:           "admin",
-		UsernamePrompt: regexp.MustCompile(`login:`),
+		User: "admin", UsernamePrompt: regexp.MustCompile(`login:`),
+		LineEnding: LineEndingCRNUL,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -270,7 +272,7 @@ func TestCustomShellPromptReplacesDefault(t *testing.T) {
 	}
 }
 
-func TestTraceRedactsOutgoingLoginData(t *testing.T) {
+func TestTraceRedactsBidirectionalLoginData(t *testing.T) {
 	var trace bytes.Buffer
 	server, conn := net.Pipe()
 	serverErr := make(chan error, 1)
@@ -285,7 +287,7 @@ func TestTraceRedactsOutgoingLoginData(t *testing.T) {
 			serverErr <- err
 			return
 		}
-		if err := writeFull(server, []byte("Password:")); err != nil {
+		if err := writeFull(server, []byte("admin\r\nPassword:")); err != nil {
 			serverErr <- err
 			return
 		}
@@ -293,11 +295,12 @@ func TestTraceRedactsOutgoingLoginData(t *testing.T) {
 			serverErr <- err
 			return
 		}
-		serverErr <- writeFull(server, []byte("router#"))
+		serverErr <- writeFull(server, []byte("secret\r\nrouter#"))
 	}()
 
 	client, err := NewClientConn(conn, &ClientConfig{
 		User: "admin", Password: "secret", Timeout: time.Second, Trace: &trace,
+		LineEnding: LineEndingCRNUL,
 	})
 	if client != nil {
 		_ = client.Close()
@@ -357,6 +360,7 @@ func runStandardLogin(t *testing.T, resultParts ...[]byte) (error, error) {
 
 	client, err := NewClientConn(conn, &ClientConfig{
 		User: "admin", Password: "secret", Timeout: 250 * time.Millisecond,
+		LineEnding: LineEndingCRNUL,
 	})
 	if client != nil {
 		_ = client.Close()
