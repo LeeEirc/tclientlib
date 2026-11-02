@@ -67,9 +67,17 @@ func (t *transport) Read(p []byte) (int, error) {
 		n, readErr := t.conn.Read(t.readBuffer)
 		if n > 0 {
 			raw := t.readBuffer[:n]
-			t.trace.bytes("wire", "recv", raw)
+			if t.traceRedacted.Load() {
+				t.trace.redacted("wire", "recv", len(raw))
+			} else {
+				t.trace.bytes("wire", "recv", raw)
+			}
 			data, events, decodeErr := t.decoder.feed(raw)
-			t.trace.bytes("application", "recv", data)
+			if t.traceRedacted.Load() {
+				t.trace.redacted("application", "recv", len(data))
+			} else {
+				t.trace.bytes("application", "recv", data)
+			}
 			t.pending = append(t.pending, data...)
 			for _, event := range events {
 				t.trace.event("recv", event)
