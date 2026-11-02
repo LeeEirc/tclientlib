@@ -2,143 +2,124 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"io"
 	"log"
 	"net"
-	"unicode"
-	"unicode/utf8"
-
-	"github.com/LeeEirc/tclientlib"
+	"time"
 )
 
 var (
-	IpAddr string
-	Port   string
+	listenAddr string
+	targetAddr string
+	maxBytes   int
 )
 
 func init() {
-	flag.StringVar(&IpAddr, "ip", "127.0.0.1", "proxy telnet ip ")
-	flag.StringVar(&Port, "port", "23", "proxy telnet port")
+	flag.StringVar(&listenAddr, "listen", "127.0.0.1:9999", "local listen address")
+	flag.StringVar(&targetAddr, "target", "", "target Telnet address, for example 192.0.2.10:23")
+	flag.IntVar(&maxBytes, "max-bytes", 256, "maximum bytes printed for each stream read; 0 prints lengths only")
 }
 
 func main() {
 	flag.Parse()
-	ln, err := net.Listen("tcp", "0.0.0.0:9999")
+	if targetAddr == "" {
+		log.Fatal("-target is required")
+	}
+	if maxBytes < 0 {
+		log.Fatal("-max-bytes must be zero or greater")
+	}
+
+	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("监听端口：", ln.Addr().String())
-	log.Println("代理的telnet服务地址：", net.JoinHostPort(IpAddr, Port))
+	defer listener.Close()
+
+	log.Printf("listening on %s, forwarding to %s", listener.Addr(), targetAddr)
+	log.Printf("warning: output contains raw Telnet stream data and may expose credentials")
+	log.Printf("read boundaries are user-space stream chunks, not original TCP packet boundaries")
+
+	var connectionID uint64
 	for {
-		conn, err := ln.Accept()
+		client, err := listener.Accept()
 		if err != nil {
-			log.Println(err)
+			log.Printf("accept: %v", err)
 			continue
 		}
-		go handler(conn)
+		connectionID++
+		go proxyConnection(connectionID, client)
 	}
-
 }
 
-func handler(con net.Conn) {
-	defer con.Close()
-	addr := net.JoinHostPort(IpAddr, Port)
-	dstCon, err := net.Dial("tcp", addr)
+type relayResult struct {
+	direction string
+	err       error
+}
+
+func proxyConnection(id uint64, client net.Conn) {
+	defer client.Close()
+	server, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
 	if err != nil {
-		log.Println(err)
+		log.Printf("conn=%d dial target: %v", id, err)
 		return
 	}
-	defer dstCon.Close()
-	srvChan := make(chan []byte)
-	clientChan := make(chan []byte)
-	done := make(chan struct{}, 2)
-	finished := make(chan struct{})
-	go func() {
-		readBuf := make([]byte, 1024)
-		for {
-			nr, err := dstCon.Read(readBuf)
-			if err != nil {
-				log.Println(err)
-				break
-			}
-			srvChan <- readBuf[:nr]
-			<-finished
+	defer server.Close()
 
-		}
-		done <- struct{}{}
-		log.Println("close dstCon")
-	}()
+	log.Printf("conn=%d opened client=%s target=%s", id, client.RemoteAddr(), server.RemoteAddr())
+	results := make(chan relayResult, 2)
+	go relay(id, "client->server", server, client, results)
+	go relay(id, "server->client", client, server, results)
 
-	go func() {
-		writeBuf := make([]byte, 1024)
-		for {
-			wr, err := con.Read(writeBuf)
-			if err != nil {
-				log.Println(err)
-				break
-			}
-			clientChan <- writeBuf[:wr]
-			<-finished
-		}
-		done <- struct{}{}
-		log.Println("close con")
-	}()
+	first := <-results
+	_ = client.Close()
+	_ = server.Close()
+	second := <-results
+	log.Printf("conn=%d closed %s=%v %s=%v", id,
+		first.direction, first.err, second.direction, second.err)
+}
 
+func relay(id uint64, direction string, dst net.Conn, src net.Conn, results chan<- relayResult) {
+	buffer := make([]byte, 32*1024)
 	for {
-		var (
-			from      string
-			humanText []string
-		)
-		select {
-		case <-done:
-			return
-		case p := <-srvChan:
-			humanText = ConvertHumanText(p)
-			from = "server send"
-			_, _ = con.Write(p)
-
-		case p := <-clientChan:
-			humanText = ConvertHumanText(p)
-			from = "client send"
-			_, _ = dstCon.Write(p)
-
-		}
-		finished <- struct{}{}
-		log.Printf("%s: len(%d) %v", from, len(humanText), humanText)
-	}
-}
-
-func ConvertHumanText(p []byte) []string {
-	humanText := make([]string, 0, len(p))
-	if len(p) == 0 {
-		return humanText
-	}
-	remain := p
-	for len(remain) > 0 {
-		var (
-			packet tclientlib.OptionPacket
-			ok     bool
-			code   rune
-		)
-		if packet, remain, ok = tclientlib.ReadOptionPacket(remain); ok {
-			humanText = append(humanText, packet.String())
-			continue
-		}
-		if code, remain = readRunePacket(remain); code != utf8.RuneError {
-			if unicode.IsPrint(code) {
-				humanText = append(humanText, string(code))
-			} else {
-				humanText = append(humanText, fmt.Sprintf("%q", code))
+		n, readErr := src.Read(buffer)
+		if n > 0 {
+			logChunk(id, direction, buffer[:n])
+			if writeErr := writeFull(dst, buffer[:n]); writeErr != nil {
+				results <- relayResult{direction: direction, err: writeErr}
+				return
 			}
-			continue
 		}
-		log.Println("unknown remain data and break: ", remain)
-		break
+		if readErr != nil {
+			results <- relayResult{direction: direction, err: readErr}
+			return
+		}
 	}
-	return humanText
 }
 
-func readRunePacket(p []byte) (code rune, rest []byte) {
-	r, l := utf8.DecodeRune(p)
-	return r, p[l:]
+func logChunk(id uint64, direction string, data []byte) {
+	if maxBytes == 0 {
+		log.Printf("conn=%d %s len=%d", id, direction, len(data))
+		return
+	}
+	sample := data
+	suffix := ""
+	if len(sample) > maxBytes {
+		sample = sample[:maxBytes]
+		suffix = " ..."
+	}
+	log.Printf("conn=%d %s len=%d data=% x%s", id, direction, len(data), sample, suffix)
+}
+
+func writeFull(writer io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := writer.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
 }

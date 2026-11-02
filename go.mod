@@ -1,3 +1,3 @@
 module github.com/LeeEirc/tclientlib
 
-go 1.15
+go 1.20
