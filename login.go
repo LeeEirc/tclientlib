@@ -1,6 +1,7 @@
 package tclientlib
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -175,7 +176,7 @@ func (m *loginMachine) handleLine(writer io.Writer, line []byte, trace *tracer) 
 			return loginPending, nil
 		}
 		trace.printf("login continue prompt matched phase=%s", m.phase)
-		if err := writeEnter(writer); err != nil {
+		if err := writeEnter(writer, m.config.LineEnding); err != nil {
 			return loginPending, err
 		}
 		m.continueResponses++
@@ -188,7 +189,7 @@ func (m *loginMachine) handleLine(writer io.Writer, line []byte, trace *tracer) 
 			return loginFailed, nil
 		}
 		trace.printf("login username prompt matched")
-		if err := writeCredential(writer, m.config.User); err != nil {
+		if err := writeCredential(writer, m.config.User, m.config.LineEnding); err != nil {
 			return loginPending, err
 		}
 		m.phase = loginAwaitPasswordOrResult
@@ -201,7 +202,7 @@ func (m *loginMachine) handleLine(writer io.Writer, line []byte, trace *tracer) 
 			return loginFailed, nil
 		}
 		trace.printf("login password prompt matched phase=%s", m.phase)
-		if err := writeCredential(writer, m.config.Password); err != nil {
+		if err := writeCredential(writer, m.config.Password, m.config.LineEnding); err != nil {
 			return loginPending, err
 		}
 		m.phase = loginAwaitResult
@@ -278,7 +279,7 @@ func fullLineMatch(pattern *regexp.Regexp, line []byte) bool {
 	return match != nil && match[0] == 0 && match[1] == len(line)
 }
 
-func login(conn net.Conn, reader io.Reader, writer io.Writer, config clientConfig, trace *tracer) error {
+func login(conn net.Conn, reader *bufio.Reader, writer io.Writer, config clientConfig, trace *tracer) error {
 	machine := newLoginMachine(config)
 	text := newLoginText(config.maxLoginBuffer)
 	trace.printf("login start user=%t password=%t timeout=%s",
@@ -286,11 +287,10 @@ func login(conn net.Conn, reader io.Reader, writer io.Writer, config clientConfi
 	guard := startLoginGuard(conn, config.Timeout)
 	defer guard.stop()
 
-	buffer := make([]byte, 4096)
 	for {
-		n, readErr := reader.Read(buffer)
-		if n > 0 {
-			lines, current := text.feed(buffer[:n])
+		value, readErr := reader.ReadByte()
+		if readErr == nil {
+			lines, current := text.feed([]byte{value})
 			for _, line := range lines {
 				result, err := machine.handleLine(writer, line, trace)
 				if err != nil {
@@ -315,15 +315,15 @@ func login(conn net.Conn, reader io.Reader, writer io.Writer, config clientConfi
 					return resultErr
 				}
 			}
+			continue
 		}
-		if readErr != nil {
-			if guard.didExpire() {
-				trace.printf("login timeout after %s", config.Timeout)
-				return fmt.Errorf("%w after %s", ErrLoginTimeout, config.Timeout)
-			}
-			trace.printf("login read error: %v", readErr)
-			return readErr
+
+		if guard.didExpire() {
+			trace.printf("login timeout after %s", config.Timeout)
+			return fmt.Errorf("%w after %s", ErrLoginTimeout, config.Timeout)
 		}
+		trace.printf("login read error: %v", readErr)
+		return readErr
 	}
 }
 
@@ -349,15 +349,16 @@ func resolveLoginResult(result loginResult, trace *tracer) (bool, error) {
 	}
 }
 
-func writeCredential(writer io.Writer, value string) error {
-	data := make([]byte, 0, len(value)+2)
+func writeCredential(writer io.Writer, value string, ending LineEnding) error {
+	terminator := ending.bytes()
+	data := make([]byte, 0, len(value)+len(terminator))
 	data = append(data, value...)
-	data = append(data, '\r', 0)
+	data = append(data, terminator...)
 	return writeFull(writer, data)
 }
 
-func writeEnter(writer io.Writer) error {
-	return writeFull(writer, []byte{'\r', 0})
+func writeEnter(writer io.Writer, ending LineEnding) error {
+	return writeFull(writer, ending.bytes())
 }
 
 func writeFull(writer io.Writer, data []byte) error {
