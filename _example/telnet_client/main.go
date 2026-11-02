@@ -16,17 +16,17 @@ import (
 )
 
 var (
-	IpAddr   string
-	Port     string
-	password string
+	ip       string
+	port     string
 	username string
+	password string
 )
 
 func init() {
-	flag.StringVar(&IpAddr, "ip", "127.0.0.1", " telnet ip")
-	flag.StringVar(&Port, "port", "23", "telnet port")
-	flag.StringVar(&username, "username", "", "telnet user")
-	flag.StringVar(&password, "password", "", " telnet password")
+	flag.StringVar(&ip, "ip", "127.0.0.1", "telnet IP")
+	flag.StringVar(&port, "port", "23", "telnet port")
+	flag.StringVar(&username, "username", "", "telnet username")
+	flag.StringVar(&password, "password", "", "telnet password")
 }
 
 func main() {
@@ -34,57 +34,40 @@ func main() {
 	fd := int(os.Stdin.Fd())
 	state, err := term.MakeRaw(fd)
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
-
 	defer term.Restore(fd, state)
 
-	w, h, _ := term.GetSize(fd)
-	conf := tclientlib.Config{
-		Username: username,
-		Password: password,
-		Timeout:  30 * time.Second,
-		TTYOptions: &tclientlib.TerminalOptions{
-			Wide: w,
-			High: h,
-		},
-	}
-	tclientlib.SetMode(tclientlib.DebugMode)
-	client, err := tclientlib.Dial("tcp", net.JoinHostPort(IpAddr, Port), &conf)
+	width, height, _ := term.GetSize(fd)
+	client, err := tclientlib.Dial("tcp", net.JoinHostPort(ip, port), &tclientlib.ClientConfig{
+		User: username, Password: password, Timeout: 30 * time.Second,
+		TerminalType: "xterm", Width: width, Height: height,
+	})
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
+	defer client.Close()
 
-	sigChan := make(chan struct{}, 1)
-
+	done := make(chan struct{}, 2)
 	go func() {
-		_, _ = io.Copy(os.Stdin, client)
-		sigChan <- struct{}{}
+		_, _ = io.Copy(os.Stdout, client)
+		done <- struct{}{}
 	}()
 	go func() {
-		_, _ = io.Copy(client, os.Stdout)
-		sigChan <- struct{}{}
+		_, _ = io.Copy(client, os.Stdin)
+		done <- struct{}{}
 	}()
 
-	sigwinchCh := make(chan os.Signal, 1)
-	signal.Notify(sigwinchCh, syscall.SIGWINCH)
+	resize := make(chan os.Signal, 1)
+	signal.Notify(resize, syscall.SIGWINCH)
 	for {
 		select {
-		case <-sigChan:
+		case <-done:
 			return
-
-		// 阻塞读取
-		case sigwinch := <-sigwinchCh:
-			if sigwinch == nil {
-				return
-			}
-			w, h, _ := term.GetSize(fd)
-			err := client.WindowChange(w, h)
-			if err != nil {
-				log.Println("Unable to send window-change request.")
-				continue
+		case <-resize:
+			width, height, _ = term.GetSize(fd)
+			if err := client.WindowChange(height, width); err != nil {
+				log.Printf("window change: %v", err)
 			}
 		}
 	}
