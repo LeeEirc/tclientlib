@@ -90,6 +90,7 @@ func TestTraceRecordsLoginState(t *testing.T) {
 		Password: "secret",
 		Timeout:  time.Second,
 		Trace:    &trace,
+		LineEnding: LineEndingCRNUL,
 	})
 	if err != nil {
 		t.Fatal(err)
