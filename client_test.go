@@ -205,6 +205,7 @@ func TestLoginHandlesFragmentedPrompts(t *testing.T) {
 
 	client, err := NewClientConn(conn, &ClientConfig{
 		User: "admin", Password: "secret", Timeout: time.Second,
+		LineEnding: LineEndingCRNUL,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +238,9 @@ func TestPasswordOnlyLogin(t *testing.T) {
 		serverErr <- err
 	}()
 
-	client, err := NewClientConn(conn, &ClientConfig{Password: "secret", Timeout: time.Second})
+	client, err := NewClientConn(conn, &ClientConfig{
+		Password: "secret", Timeout: time.Second, LineEnding: LineEndingCRNUL,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +294,7 @@ func TestWrapStreamIsTheSingleLoginAndSessionPath(t *testing.T) {
 	}()
 
 	client, err := NewClientConn(conn, &ClientConfig{
-		User: "admin", Timeout: time.Second,
+		User: "admin", Timeout: time.Second, LineEnding: LineEndingCRNUL,
 		WrapStream: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
 			return lowerReader{reader}, upperWriter{writer}
 		},
