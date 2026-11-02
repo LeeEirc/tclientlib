@@ -27,12 +27,15 @@ type ClientConfig struct {
 	Width        int
 	Height       int
 
-	// Prompt expressions are additional matches. Built-in expressions remain
-	// active, so callers only need to describe device-specific prompts.
-	UsernamePrompt *regexp.Regexp
-	PasswordPrompt *regexp.Regexp
-	SuccessPrompt  *regexp.Regexp
-	FailurePrompt  *regexp.Regexp
+	// Prompt expressions replace the built-in expression for that event. They
+	// are matched against one normalized logical line and must match the entire
+	// line. ShellPrompt describes the final interactive prompt, not a success
+	// message in a login banner.
+	UsernamePrompt       *regexp.Regexp
+	PasswordPrompt       *regexp.Regexp
+	ShellPrompt          *regexp.Regexp
+	FailurePrompt        *regexp.Regexp
+	PasswordChangePrompt *regexp.Regexp
 
 	// WrapStream optionally wraps the decoded Telnet application stream before
 	// login and before it is exposed through Client.Read and Client.Write. It is
@@ -41,8 +44,8 @@ type ClientConfig struct {
 
 	// Trace receives line-oriented diagnostics for raw wire traffic, decoded
 	// application data, Telnet negotiation, and login state transitions. It is
-	// disabled when nil. Trace output can contain usernames, passwords, command
-	// input, and terminal output, so it must only be enabled for troubleshooting.
+	// disabled when nil. Outgoing login data is redacted, but received terminal
+	// output and post-login commands may still contain sensitive information.
 	Trace io.Writer
 }
 
@@ -50,6 +53,26 @@ type clientConfig struct {
 	ClientConfig
 	maxLoginBuffer    int
 	maxSubnegotiation int
+}
+
+type transportConfig struct {
+	User              string
+	TerminalType      string
+	Width             int
+	Height            int
+	Trace             io.Writer
+	maxSubnegotiation int
+}
+
+func (c clientConfig) transportConfig() transportConfig {
+	return transportConfig{
+		User:              c.User,
+		TerminalType:      c.TerminalType,
+		Width:             c.Width,
+		Height:            c.Height,
+		Trace:             c.Trace,
+		maxSubnegotiation: c.maxSubnegotiation,
+	}
 }
 
 func prepareConfig(config *ClientConfig) (clientConfig, error) {

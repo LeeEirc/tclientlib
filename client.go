@@ -47,7 +47,7 @@ func NewClientConn(conn net.Conn, config *ClientConfig) (*Client, error) {
 }
 
 func newClientConn(conn net.Conn, config clientConfig) (*Client, error) {
-	transport := newTransport(conn, config)
+	transport := newTransport(conn, config.transportConfig())
 	var reader io.Reader = transport
 	var writer io.Writer = transport
 	if config.WrapStream != nil {
@@ -65,7 +65,10 @@ func newClientConn(conn net.Conn, config clientConfig) (*Client, error) {
 		writer:    writer,
 	}
 	if config.User != "" || config.Password != "" {
-		if err := login(conn, reader, writer, config, transport.trace); err != nil {
+		transport.setTraceRedaction(true)
+		err := login(conn, reader, writer, config, transport.trace)
+		transport.setTraceRedaction(false)
+		if err != nil {
 			_ = client.Close()
 			return nil, fmt.Errorf("telnet: handshake failed: %w", err)
 		}
