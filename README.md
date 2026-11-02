@@ -17,10 +17,11 @@ type ClientConfig struct {
     Width        int
     Height       int
 
-    UsernamePrompt *regexp.Regexp
-    PasswordPrompt *regexp.Regexp
-    SuccessPrompt  *regexp.Regexp
-    FailurePrompt  *regexp.Regexp
+    UsernamePrompt       *regexp.Regexp
+    PasswordPrompt       *regexp.Regexp
+    ShellPrompt          *regexp.Regexp
+    FailurePrompt        *regexp.Regexp
+    PasswordChangePrompt *regexp.Regexp
 
     WrapStream func(io.Reader, io.Writer) (io.Reader, io.Writer)
     Trace      io.Writer
@@ -83,6 +84,46 @@ Send a Telnet break without constructing raw protocol bytes:
 err := client.SendCommand(tclientlib.CommandBreak)
 ```
 
+## Login matching
+
+Telnet does not define an authentication protocol. The client therefore treats
+login as a small expect-style state machine instead of searching an entire
+banner for broad success or failure words.
+
+Before matching, login output is normalized into logical terminal lines:
+
+- Telnet framing has already been removed;
+- an optional charset wrapper has already decoded the bytes;
+- NUL and BEL are ignored;
+- backspace and carriage-return overwrite behavior is applied;
+- common ANSI CSI and OSC sequences are removed.
+
+Username, password, shell, failure, and password-change expressions are matched
+against one normalized line. A custom expression replaces the built-in
+expression for that event and must match the complete line. `ShellPrompt`
+represents the final interactive prompt, such as `router#`, `switch>`, or
+`user@host:~$`; login-history text such as `Last login`, `success`, or `成功` is
+not considered proof of authentication.
+
+For example:
+
+```go
+config.ShellPrompt = regexp.MustCompile(`(?:<[^>]+>|router(?:\([^)]*\))?[#>])`)
+config.FailurePrompt = regexp.MustCompile(`(?:Login incorrect|Access denied)`)
+```
+
+When the remote side requires a password change, constructors return an error
+that matches `ErrPasswordChangeRequired`:
+
+```go
+client, err := tclientlib.Dial("tcp", address, config)
+if errors.Is(err, tclientlib.ErrPasswordChangeRequired) {
+    // Handle password rotation in the calling application's credential workflow.
+}
+```
+
+The library deliberately does not choose or submit a new password.
+
 ## Charset conversion
 
 The same wrapped stream is used for both initial login and the interactive
@@ -118,10 +159,12 @@ The trace includes:
 - login state transitions and terminal resize events.
 
 Tracing is disabled when `Trace` is nil. Each byte dump is bounded, so a large
-terminal read does not produce an unbounded log line.
+terminal read does not produce an unbounded log line. Outgoing data is redacted
+while the initial login state machine is active.
 
-**Warning:** traces can contain usernames, passwords, commands, and terminal
-output. Store them securely and remove them after troubleshooting.
+**Warning:** received terminal output and post-login commands may still contain
+sensitive information. Store traces securely and remove them after
+troubleshooting.
 
 The example client can write a trace directly:
 
