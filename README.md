@@ -23,6 +23,7 @@ type ClientConfig struct {
     FailurePrompt  *regexp.Regexp
 
     WrapStream func(io.Reader, io.Writer) (io.Reader, io.Writer)
+    Trace      io.Writer
 }
 
 func Dial(network, addr string, config *ClientConfig) (*Client, error)
@@ -93,6 +94,56 @@ config.WrapStream = func(reader io.Reader, writer io.Writer) (io.Reader, io.Writ
     return transform.NewReader(reader, decoder), transform.NewWriter(writer, encoder)
 }
 ```
+
+## Debugging Telnet traffic
+
+Set `ClientConfig.Trace` to an `io.Writer` to enable line-oriented diagnostics:
+
+```go
+traceFile, err := os.Create("telnet.trace")
+if err != nil {
+    return err
+}
+defer traceFile.Close()
+
+config.Trace = traceFile
+```
+
+The trace includes:
+
+- raw wire bytes in both directions;
+- decoded Telnet application data;
+- parsed `WILL`, `WONT`, `DO`, `DONT`, command, and subnegotiation events;
+- generated negotiation responses;
+- login state transitions and terminal resize events.
+
+Tracing is disabled when `Trace` is nil. Each byte dump is bounded, so a large
+terminal read does not produce an unbounded log line.
+
+**Warning:** traces can contain usernames, passwords, commands, and terminal
+output. Store them securely and remove them after troubleshooting.
+
+The example client can write a trace directly:
+
+```bash
+cd _example/telnet_client
+go run . -ip 192.0.2.10 -port 23 -username admin -trace-file telnet.trace
+```
+
+For failures involving another Telnet client, or for observing traffic without
+changing application code, use the transparent monitor:
+
+```bash
+cd _example/monitor
+go run . -listen 127.0.0.1:9999 -target 192.0.2.10:23
+```
+
+Then point the client at `127.0.0.1:9999`. The monitor records raw bidirectional
+stream chunks and does not depend on exported parser internals.
+
+The monitor and `Trace` observe the TCP byte stream. User-space `Read` boundaries
+are not the original TCP packet boundaries. Use `tcpdump` or Wireshark when the
+actual network packet layout, retransmission, or timing is relevant.
 
 ## Scope and privilege switching
 

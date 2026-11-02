@@ -56,11 +56,13 @@ type loginState struct {
 	passwordSent bool
 }
 
-func login(conn net.Conn, reader io.Reader, writer io.Writer, config clientConfig) error {
+func login(conn net.Conn, reader io.Reader, writer io.Writer, config clientConfig, trace *tracer) error {
 	state := loginState{
 		usernameSent: config.User == "",
 		passwordSent: config.Password == "",
 	}
+	trace.printf("login start user=%t password=%t timeout=%s",
+		config.User != "", config.Password != "", config.Timeout)
 	guard := startLoginGuard(conn, config.Timeout)
 	defer guard.stop()
 
@@ -70,14 +72,17 @@ func login(conn net.Conn, reader io.Reader, writer io.Writer, config clientConfi
 		n, readErr := reader.Read(buffer)
 		if n > 0 {
 			received = appendRolling(received, buffer[:n], config.maxLoginBuffer)
-			result, err := handleLoginData(writer, received, config, &state)
+			result, err := handleLoginData(writer, received, config, &state, trace)
 			if err != nil {
+				trace.printf("login write error: %v", err)
 				return err
 			}
 			switch result {
 			case loginSuccess:
+				trace.printf("login success")
 				return nil
 			case loginFailed:
+				trace.printf("login failed")
 				return ErrLoginFailed
 			case loginCredentialSent:
 				received = received[:0]
@@ -86,8 +91,10 @@ func login(conn net.Conn, reader io.Reader, writer io.Writer, config clientConfi
 		}
 		if readErr != nil {
 			if guard.didExpire() {
+				trace.printf("login timeout after %s", config.Timeout)
 				return fmt.Errorf("%w after %s", ErrLoginTimeout, config.Timeout)
 			}
+			trace.printf("login read error: %v", readErr)
 			return readErr
 		}
 	}
@@ -102,11 +109,12 @@ const (
 	loginFailed
 )
 
-func handleLoginData(writer io.Writer, data []byte, config clientConfig, state *loginState) (loginResult, error) {
+func handleLoginData(writer io.Writer, data []byte, config clientConfig, state *loginState, trace *tracer) (loginResult, error) {
 	usernamePrompt := matchAny(data, defaultUsernamePrompt, config.UsernamePrompt)
 	passwordPrompt := matchAny(data, defaultPasswordPrompt, config.PasswordPrompt)
 
 	if !state.usernameSent && usernamePrompt {
+		trace.printf("login username prompt matched")
 		if err := writeCredential(writer, config.User); err != nil {
 			return loginPending, err
 		}
@@ -114,6 +122,7 @@ func handleLoginData(writer io.Writer, data []byte, config clientConfig, state *
 		return loginCredentialSent, nil
 	}
 	if !state.passwordSent && passwordPrompt {
+		trace.printf("login password prompt matched")
 		if err := writeCredential(writer, config.Password); err != nil {
 			return loginPending, err
 		}
@@ -128,9 +137,11 @@ func handleLoginData(writer io.Writer, data []byte, config clientConfig, state *
 		return loginFailed, nil
 	}
 	if state.usernameSent && config.User != "" && usernamePrompt {
+		trace.printf("login username prompt repeated")
 		return loginFailed, nil
 	}
 	if state.passwordSent && config.Password != "" && passwordPrompt {
+		trace.printf("login password prompt repeated")
 		return loginFailed, nil
 	}
 	return loginPending, nil

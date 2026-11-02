@@ -38,6 +38,12 @@ type ClientConfig struct {
 	// login and before it is exposed through Client.Read and Client.Write. It is
 	// intended for charset conversion or similarly transparent stream adapters.
 	WrapStream func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer)
+
+	// Trace receives line-oriented diagnostics for raw wire traffic, decoded
+	// application data, Telnet negotiation, and login state transitions. It is
+	// disabled when nil. Trace output can contain usernames, passwords, command
+	// input, and terminal output, so it must only be enabled for troubleshooting.
+	Trace io.Writer
 }
 
 type clientConfig struct {

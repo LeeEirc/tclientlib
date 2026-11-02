@@ -12,6 +12,7 @@ type transport struct {
 	conn    net.Conn
 	config  clientConfig
 	decoder *decoder
+	trace   *tracer
 
 	readMu     sync.Mutex
 	writeMu    sync.Mutex
@@ -29,6 +30,7 @@ func newTransport(conn net.Conn, config clientConfig) *transport {
 		conn:       conn,
 		config:     config,
 		decoder:    newDecoder(config.maxSubnegotiation),
+		trace:      newTracer(config.Trace),
 		readBuffer: make([]byte, 4096),
 	}
 }
@@ -58,18 +60,24 @@ func (t *transport) Read(p []byte) (int, error) {
 
 		n, readErr := t.conn.Read(t.readBuffer)
 		if n > 0 {
-			data, events, decodeErr := t.decoder.feed(t.readBuffer[:n])
+			raw := t.readBuffer[:n]
+			t.trace.bytes("wire", "recv", raw)
+			data, events, decodeErr := t.decoder.feed(raw)
+			t.trace.bytes("application", "recv", data)
 			t.pending = append(t.pending, data...)
 			for _, event := range events {
+				t.trace.event("recv", event)
 				if err := t.handleEvent(event); err != nil && t.pendingErr == nil {
 					t.pendingErr = err
 				}
 			}
 			if decodeErr != nil && t.pendingErr == nil {
+				t.trace.printf("decode error: %v", decodeErr)
 				t.pendingErr = decodeErr
 			}
 		}
 		if readErr != nil && t.pendingErr == nil {
+			t.trace.printf("wire recv error: %v", readErr)
 			t.pendingErr = readErr
 		}
 		if len(t.pending) > 0 || t.pendingErr != nil || n == 0 {
@@ -79,6 +87,7 @@ func (t *transport) Read(p []byte) (int, error) {
 }
 
 func (t *transport) Write(p []byte) (int, error) {
+	t.trace.bytes("application", "send", p)
 	encoded := appendEscapedIAC(make([]byte, 0, len(p)), p)
 	written, err := t.writeRaw(encoded)
 	if err != nil {
@@ -107,6 +116,7 @@ func (t *transport) sendCommand(command Command) error {
 	if !validCommand(command) {
 		return fmt.Errorf("%w: command %d", ErrProtocol, command)
 	}
+	t.trace.printf("command send %s", telnetCommandName(byte(command)))
 	return t.writeAll([]byte{iac, byte(command)})
 }
 
@@ -128,6 +138,7 @@ func (t *transport) windowChange(height, width int) error {
 	packet := t.windowPacketLocked()
 	t.stateMu.Unlock()
 
+	t.trace.printf("window change height=%d width=%d negotiated=%t", height, width, enabled)
 	if !enabled {
 		return nil
 	}
@@ -259,6 +270,7 @@ func (t *transport) writePackets(packets ...optionPacket) error {
 	}
 	data := make([]byte, 0, len(packets)*3)
 	for _, packet := range packets {
+		t.trace.packet("send", packet)
 		data = append(data, packet.bytes()...)
 	}
 	return t.writeAll(data)
@@ -276,9 +288,13 @@ func (t *transport) writeRaw(data []byte) (int, error) {
 	total := 0
 	for len(data) > 0 {
 		n, err := t.conn.Write(data)
+		if n > 0 {
+			t.trace.bytes("wire", "send", data[:n])
+		}
 		total += n
 		data = data[n:]
 		if err != nil {
+			t.trace.printf("wire send error: %v", err)
 			return total, err
 		}
 		if n == 0 {

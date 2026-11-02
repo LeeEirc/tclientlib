@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	ip       string
-	port     string
-	username string
-	password string
+	ip        string
+	port      string
+	username  string
+	password  string
+	traceFile string
 )
 
 func init() {
@@ -27,10 +28,25 @@ func init() {
 	flag.StringVar(&port, "port", "23", "telnet port")
 	flag.StringVar(&username, "username", "", "telnet username")
 	flag.StringVar(&password, "password", "", "telnet password")
+	flag.StringVar(&traceFile, "trace-file", "", "write Telnet wire and protocol trace to this file")
 }
 
 func main() {
 	flag.Parse()
+
+	var trace io.Writer
+	var traceCloser io.Closer
+	if traceFile != "" {
+		file, err := os.Create(traceFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		trace = file
+		traceCloser = file
+		defer traceCloser.Close()
+		log.Printf("warning: trace file may contain credentials and terminal data: %s", traceFile)
+	}
+
 	fd := int(os.Stdin.Fd())
 	state, err := term.MakeRaw(fd)
 	if err != nil {
@@ -42,6 +58,7 @@ func main() {
 	client, err := tclientlib.Dial("tcp", net.JoinHostPort(ip, port), &tclientlib.ClientConfig{
 		User: username, Password: password, Timeout: 30 * time.Second,
 		TerminalType: "xterm", Width: width, Height: height,
+		Trace: trace,
 	})
 	if err != nil {
 		log.Fatal(err)

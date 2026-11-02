@@ -65,7 +65,7 @@ func newClientConn(conn net.Conn, config clientConfig) (*Client, error) {
 		writer:    writer,
 	}
 	if config.User != "" || config.Password != "" {
-		if err := login(conn, reader, writer, config); err != nil {
+		if err := login(conn, reader, writer, config, transport.trace); err != nil {
 			_ = client.Close()
 			return nil, fmt.Errorf("telnet: handshake failed: %w", err)
 		}
