@@ -6,22 +6,44 @@ import (
 	"io"
 	"net"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 )
 
+const (
+	maxContinueResponses = 3
+	maxDefaultPromptBytes = 128
+)
+
 var (
-	defaultUsernamePrompt = regexp.MustCompile(`(?i)^(?:login|username|user(?:\s*name)?|name|用户名|账\s*号)\s*[:：]?\s*$`)
-	defaultPasswordPrompt = regexp.MustCompile(`(?i)^(?:password(?:\s+for\s+[^:：\r\n]+)?|passwd|passcode|口令|(?:[^:：\r\n]*的\s*)?密\s*码)\s*[:：]?\s*$`)
-	defaultShellPrompt = regexp.MustCompile(
-		`(?i)^(?:<[^<>\r\n]{1,126}>|\[[^\[\]\r\n]{1,126}\][#$]?|[a-z0-9_.:@/\\~()\-]{0,127}[#$>])\s*$`,
+	defaultUsernamePrompt = regexp.MustCompile(
+		`(?i)^\s*(?:(?:(?:please\s+)?(?:enter|input)\s+(?:your\s+)?(?:login|user(?:\s*name)?))|login\s+as|login|user(?:\s*name)?|name|用户名|账\s*号|(?:请\s*)?(?:输入|键入)(?:用户\s*名|账\s*号))\s*[:：]\s*$`,
+	)
+	defaultPasswordPrompt = regexp.MustCompile(
+		`(?i)^\s*(?:(?:(?:please\s+)?(?:enter|input)\s+(?:your\s+)?(?:password|passwd|passcode)(?:\s+for\s+[^:：\r\n]+)?)|(?:password|passwd|passcode)(?:\s+for\s+[^:：\r\n]+)?|(?:login|user)\s+password|口令|(?:[^:：\r\n]*的\s*)?密\s*码|(?:请\s*)?(?:输入|键入)(?:登录\s*)?(?:密\s*码|口令))\s*(?:\([^()\r\n]{1,64}\))?\s*[:：]\s*$`,
+	)
+	defaultAngleShellPrompt = regexp.MustCompile(
+		`^<[\pL\pN_.:@/\\~()\-]{1,126}>$`,
+	)
+	defaultBracketShellPrompt = regexp.MustCompile(
+		`^\[[\pL\pN_.:@/\\~()\-]{1,126}\]$`,
+	)
+	defaultMarkedBracketShellPrompt = regexp.MustCompile(
+		`^\[[^\[\]\r\n]{1,126}\][#$%]$`,
+	)
+	defaultTokenShellPrompt = regexp.MustCompile(
+		`^(?:[\pL\pN_.:@/\\~()\-]+(?:[ \t]+[\pL\pN_.:@/\\~()\-]+){0,2})?\s*[#$>%]$`,
 	)
 	defaultFailurePrompt = regexp.MustCompile(
-		`(?i)^\s*(?:%?\s*login\s+(?:incorrect|invalid|failed)|(?:error:\s*)?(?:failed\s+to\s+login|login\s+failed)|authentication\s+(?:failed|failure)|access\s+denied|permission\s+denied|invalid\s+(?:user(?:name)?|password)|incorrect\s+(?:user(?:name)?|password)|wrong\s+passwords?|bad\s+(?:passwords?|secrets?)|username\s+or\s+password\s+(?:error|incorrect)|登录失败|认证失败|用户名或密码(?:错误|不正确)|访问被拒绝)\s*[.!。]?\s*$`,
+		`(?i)^\s*%?\s*(?:error:\s*)?(?:login\s+(?:incorrect|invalid|failed)(?:\s+for\s+(?:user\s+)?[^,;:.!。]+)?|failed\s+to\s+login(?:\s+for\s+(?:user\s+)?[^,;:.!。]+)?|(?:user\s+)?authentication\s+(?:failed|failure)|login\s+authentication\s+(?:failed|failure)|access\s+denied|permission\s+denied|invalid\s+(?:login|user(?:name)?|password)|incorrect\s+(?:user(?:name)?|password|username\s+or\s+password)|wrong\s+(?:(?:user(?:name)?|login)\s+or\s+)?passwords?|bad\s+(?:passwords?|secrets?)|(?:username|user\s+name)\s+or\s+password\s+(?:error|incorrect|invalid)|登录失败|认证失败|用户名或密码(?:错误|不正确)|访问被拒绝)(?:\s*[.!。])?(?:\s*[,;:，；：]?\s*(?:please\s+)?(?:try\s+again|retry)|\s*[,;:，；：]?\s*请重试)?\s*[>#]?\s*[.!。]?\s*$`,
 	)
 	defaultPasswordChangePrompt = regexp.MustCompile(
-		`(?i)^\s*(?:(?:warning:\s*)?.*(?:your\s+)?password\s+(?:has\s+)?expired.*|.*password\s+change\s+(?:is\s+)?(?:required|needed).*|.*(?:are\s+required|must)\s+(?:to\s+)?change\s+(?:your\s+)?password.*|.*change\s+(?:your\s+)?password\s+now.*|current\s+(?:unix\s+)?password\s*[:：]?|old\s+password\s*[:：]?|new\s+password\s*[:：]?|retype\s+(?:new\s+)?password\s*[:：]?|confirm\s+(?:new\s+)?password\s*[:：]?|.*密码(?:已经|已)?过期.*|.*(?:必须|需要)修改密码.*|当前密码\s*[:：]?|旧密码\s*[:：]?|新密码\s*[:：]?|确认新密码\s*[:：]?|重新输入(?:新)?密码\s*[:：]?)\s*$`,
+		`(?i)^\s*(?:(?:warning:\s*|error:\s*|%\s*)?(?:(?:(?:the\s+)?password(?:\s+for\s+[^,;:.!。]+)?|your\s+password)\s+(?:has\s+)?expired(?:\s*[,;:]\s*(?:please\s+)?(?:change|update)\s+(?:it|your\s+password)(?:\s+(?:now|immediately))?)?|password\s+change\s+(?:is\s+)?(?:required|needed)|you\s+(?:are\s+required|must)\s+(?:to\s+)?change\s+(?:your\s+)?password(?:\s+(?:now|immediately))?|change\s+(?:your\s+)?password\s+(?:now|immediately)|current\s+(?:unix\s+)?password\s*[:：]?|old\s+password\s*[:：]?|new\s+password\s*[:：]?|(?:retype|re-enter|confirm|verify)\s+(?:your\s+)?(?:new\s+)?password\s*[:：]?|(?:enter|input)\s+(?:your\s+)?(?:current|old|new)\s+password\s*[:：]?|密码(?:已经|已)过期(?:\s*[,，]\s*(?:请)?(?:修改|更新)密码)?|(?:必须|需要)修改密码|当前密码\s*[:：]?|旧密码\s*[:：]?|新密码\s*[:：]?|确认新密码\s*[:：]?|重新输入(?:新)?密码\s*[:：]?))\s*[.!。]?\s*$`,
+	)
+	defaultContinuePrompt = regexp.MustCompile(
+		`(?i)^\s*(?:(?:please\s+)?(?:press|hit)\s+(?:(?:the\s+)?<?(?:enter|return)>?(?:\s+key)?|any\s+key)\s+to\s+(?:continue|proceed|get\s+started|start)|按(?:下)?(?:回车|enter)键?(?:以)?继续|按(?:下)?任意键(?:以)?继续)\s*[.!。…]*\s*$`,
 	)
 )
 
@@ -86,15 +108,17 @@ type loginPatterns struct {
 	shell          *regexp.Regexp
 	failure        *regexp.Regexp
 	passwordChange *regexp.Regexp
+	continuePrompt *regexp.Regexp
 }
 
 func patternsFor(config clientConfig) loginPatterns {
 	return loginPatterns{
 		username:       selectPattern(config.UsernamePrompt, defaultUsernamePrompt),
 		password:       selectPattern(config.PasswordPrompt, defaultPasswordPrompt),
-		shell:          selectPattern(config.ShellPrompt, defaultShellPrompt),
+		shell:          config.ShellPrompt,
 		failure:        selectPattern(config.FailurePrompt, defaultFailurePrompt),
 		passwordChange: selectPattern(config.PasswordChangePrompt, defaultPasswordChangePrompt),
+		continuePrompt: selectPattern(config.ContinuePrompt, defaultContinuePrompt),
 	}
 }
 
@@ -106,9 +130,10 @@ func selectPattern(custom, fallback *regexp.Regexp) *regexp.Regexp {
 }
 
 type loginMachine struct {
-	phase    loginPhase
-	config   clientConfig
-	patterns loginPatterns
+	phase             loginPhase
+	config            clientConfig
+	patterns          loginPatterns
+	continueResponses int
 }
 
 func newLoginMachine(config clientConfig) *loginMachine {
@@ -124,6 +149,7 @@ type loginResult uint8
 const (
 	loginPending loginResult = iota
 	loginCredentialSent
+	loginContinueSent
 	loginSuccess
 	loginFailed
 	loginPasswordChangeRequired
@@ -142,6 +168,18 @@ func (m *loginMachine) handleLine(writer io.Writer, line []byte, trace *tracer) 
 	if fullLineMatch(m.patterns.failure, line) {
 		trace.printf("login failure prompt matched phase=%s", m.phase)
 		return loginFailed, nil
+	}
+	if fullLineMatch(m.patterns.continuePrompt, line) {
+		if m.continueResponses >= maxContinueResponses {
+			trace.printf("login continue prompt ignored after limit phase=%s", m.phase)
+			return loginPending, nil
+		}
+		trace.printf("login continue prompt matched phase=%s", m.phase)
+		if err := writeEnter(writer); err != nil {
+			return loginPending, err
+		}
+		m.continueResponses++
+		return loginContinueSent, nil
 	}
 
 	if fullLineMatch(m.patterns.username, line) {
@@ -170,12 +208,65 @@ func (m *loginMachine) handleLine(writer io.Writer, line []byte, trace *tracer) 
 		return loginCredentialSent, nil
 	}
 
-	if fullLineMatch(m.patterns.shell, line) {
+	if m.shellPromptMatches(line) {
 		trace.printf("login shell prompt matched phase=%s", m.phase)
 		return loginSuccess, nil
 	}
 
 	return loginPending, nil
+}
+
+func (m *loginMachine) shellPromptMatches(line []byte) bool {
+	if m.patterns.shell != nil {
+		return fullLineMatch(m.patterns.shell, line)
+	}
+	return defaultShellPromptMatches(line)
+}
+
+func defaultShellPromptMatches(line []byte) bool {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 || len(line) > maxDefaultPromptBytes {
+		return false
+	}
+	if defaultMarkedBracketShellPrompt.Match(line) {
+		return true
+	}
+	if defaultTokenShellPrompt.Match(line) && !isBannerLikeShellPrompt(string(line)) {
+		return true
+	}
+
+	text := string(line)
+	switch {
+	case defaultAngleShellPrompt.Match(line):
+		return !isBannerLabel(strings.TrimSuffix(strings.TrimPrefix(text, "<"), ">"))
+	case defaultBracketShellPrompt.Match(line):
+		return !isBannerLabel(strings.TrimSuffix(strings.TrimPrefix(text, "["), "]"))
+	default:
+		return false
+	}
+}
+
+func isBannerLabel(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "warning", "notice", "error", "info", "alert", "message", "unauthorized", "denied":
+		return true
+	default:
+		return false
+	}
+}
+
+func isBannerLikeShellPrompt(value string) bool {
+	value = strings.TrimSpace(strings.TrimRight(value, "#$>%"))
+	fields := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	})
+	for _, field := range fields {
+		switch field {
+		case "login", "successful", "failed", "failure", "password", "warning", "notice", "error", "press", "hit", "unauthorized", "denied", "attempt", "attempts", "continue":
+			return true
+		}
+	}
+	return false
 }
 
 func fullLineMatch(pattern *regexp.Regexp, line []byte) bool {
@@ -217,7 +308,7 @@ func login(conn net.Conn, reader io.Reader, writer io.Writer, config clientConfi
 					trace.printf("login write error: %v", err)
 					return err
 				}
-				if result == loginCredentialSent {
+				if isLoginAction(result) {
 					text.consumeCurrent()
 				}
 				if done, resultErr := resolveLoginResult(result, trace); done {
@@ -236,6 +327,10 @@ func login(conn net.Conn, reader io.Reader, writer io.Writer, config clientConfi
 	}
 }
 
+func isLoginAction(result loginResult) bool {
+	return result == loginCredentialSent || result == loginContinueSent
+}
+
 func resolveLoginResult(result loginResult, trace *tracer) (bool, error) {
 	switch result {
 	case loginSuccess:
@@ -247,7 +342,7 @@ func resolveLoginResult(result loginResult, trace *tracer) (bool, error) {
 	case loginPasswordChangeRequired:
 		trace.printf("login password change required")
 		return true, ErrPasswordChangeRequired
-	case loginPending, loginCredentialSent:
+	case loginPending, loginCredentialSent, loginContinueSent:
 		return false, nil
 	default:
 		return true, fmt.Errorf("%w: unknown login result %d", ErrProtocol, result)
@@ -259,6 +354,10 @@ func writeCredential(writer io.Writer, value string) error {
 	data = append(data, value...)
 	data = append(data, '\r', 0)
 	return writeFull(writer, data)
+}
+
+func writeEnter(writer io.Writer) error {
+	return writeFull(writer, []byte{'\r', 0})
 }
 
 func writeFull(writer io.Writer, data []byte) error {
