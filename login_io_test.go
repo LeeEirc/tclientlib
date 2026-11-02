@@ -90,9 +90,6 @@ func TestPostLoginBufferedDataIsPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if err := <-serverErr; err != nil {
-		t.Fatal(err)
-	}
 
 	want := []byte("\r\nALARM: fan speed low\r\n")
 	got := make([]byte, len(want))
@@ -101,5 +98,8 @@ func TestPostLoginBufferedDataIsPreserved(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
 	}
 }
