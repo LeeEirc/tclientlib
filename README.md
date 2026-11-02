@@ -16,6 +16,7 @@ type ClientConfig struct {
     TerminalType string
     Width        int
     Height       int
+    LineEnding   LineEnding
 
     UsernamePrompt       *regexp.Regexp
     PasswordPrompt       *regexp.Regexp
@@ -136,6 +137,30 @@ Built-in username and password prompts deliberately require prompt punctuation.
 An unusual device that emits a bare prompt without `:` or `：` should provide a
 platform-specific expression rather than making the global fallback ambiguous.
 
+Login and the interactive session share one buffered reader. The login state
+machine stops as soon as the final shell prompt is recognized. Bytes already
+received after that prompt remain buffered for the next `Client.Read`; they are
+not discarded and the matched prompt itself is not replayed.
+
+### Automatic line endings
+
+Automatic usernames, passwords, and continue responses use `CR LF` by default.
+This does not rewrite data passed to `Client.Write`. Devices with non-standard
+input behavior can select another terminator:
+
+```go
+config.LineEnding = tclientlib.LineEndingCRNUL // CR NUL
+config.LineEnding = tclientlib.LineEndingCR    // bare CR
+config.LineEnding = tclientlib.LineEndingLF    // bare LF
+```
+
+Supported values are:
+
+- `LineEndingCRLF` — default Telnet NVT newline;
+- `LineEndingCRNUL` — carriage return without a line feed;
+- `LineEndingCR` — bare carriage return;
+- `LineEndingLF` — bare line feed.
+
 When the remote side requires a password change, constructors return an error
 that matches `ErrPasswordChangeRequired`:
 
@@ -187,12 +212,12 @@ The trace includes:
 - login state transitions and terminal resize events.
 
 Tracing is disabled when `Trace` is nil. Each byte dump is bounded, so a large
-terminal read does not produce an unbounded log line. Outgoing data is redacted
-while the initial login state machine is active.
+terminal read does not produce an unbounded log line. Both received and sent byte
+dumps are replaced by `<redacted>` while the initial login state machine is
+active; semantic negotiation and login-state events remain visible.
 
-**Warning:** received terminal output and post-login commands may still contain
-sensitive information. Store traces securely and remove them after
-troubleshooting.
+**Warning:** post-login commands and terminal output may still contain sensitive
+information. Store traces securely and remove them after troubleshooting.
 
 The example client can write a trace directly:
 
