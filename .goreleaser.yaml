@@ -1,0 +1,63 @@
+version: 2
+
+project_name: tclient
+
+builds:
+  - id: tclient
+    main: ./cmd/tclient
+    binary: tclient
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/LeeEirc/tclientlib/internal/cli.version={{ .Version }}
+        -X github.com/LeeEirc/tclientlib/internal/cli.commit={{ .FullCommit }}
+        -X github.com/LeeEirc/tclientlib/internal/cli.date={{ .Date }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: tclient
+    ids:
+      - tclient
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - docs/cli.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+
+release:
+  draft: true
+  prerelease: auto
+  replace_existing_draft: true
+  footer: |
+    ## Downloads
+
+    Archives contain the `tclient` binary and CLI documentation. Verify the
+    download against `checksums.txt`, then run `tclient --version` to inspect
+    its version and build information. GitHub build attestations are available
+    for the archives.
+
+    Interactive terminals are supported on Unix. Windows supports redirected
+    input and output; Windows TTY input is not supported.

@@ -19,6 +19,7 @@ import (
 )
 
 type options struct {
+	version      bool
 	address      string
 	timeout      time.Duration
 	drainTimeout time.Duration
@@ -37,6 +38,7 @@ func parseOptions(args []string, output io.Writer) (options, error) {
 	var o options
 	f := flag.NewFlagSet("tclient", flag.ContinueOnError)
 	f.SetOutput(output)
+	f.BoolVar(&o.version, "version", false, "print version and build information and exit")
 	f.DurationVar(&o.timeout, "timeout", 15*time.Second, "connection and automatic-login timeout")
 	f.DurationVar(&o.drainTimeout, "drain-timeout", 5*time.Second, "maximum wait for remote output after stdin EOF")
 	f.BoolVar(&o.closeWrite, "close-write", false, "half-close TCP on stdin EOF (disables further Telnet replies)")
@@ -60,6 +62,9 @@ func parseOptions(args []string, output io.Writer) (options, error) {
 	}
 	if err := f.Parse(args); err != nil {
 		return o, err
+	}
+	if o.version {
+		return o, nil
 	}
 	if f.NArg() < 1 || f.NArg() > 2 {
 		return o, fmt.Errorf("expected host [port]; use --help for usage")

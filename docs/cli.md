@@ -4,6 +4,36 @@
 library. It is an interactive client and a way to reproduce a connection outside
 Koko. It is not a complete GNU/NetKit Telnet replacement.
 
+## Install a release
+
+Download the archive matching your system from
+[GitHub Releases](https://github.com/LeeEirc/tclientlib/releases). The archive
+name is `tclient_VERSION_OS_ARCH`: Linux and macOS use `.tar.gz`, and Windows
+uses `.zip`. `darwin` denotes macOS; `amd64` is x86-64, and `arm64` includes
+Apple Silicon and other ARM64 systems. Windows supports redirected sessions;
+its interactive TTY mode is not supported.
+
+Download `checksums.txt` from the same release. On Linux, verify downloaded
+archives with:
+
+```bash
+sha256sum --check --ignore-missing checksums.txt
+```
+
+On macOS, use `shasum -a 256 ARCHIVE`; on Windows, use
+`Get-FileHash ARCHIVE -Algorithm SHA256`, and compare the hash with the matching
+line in `checksums.txt`. GitHub CLI can also verify the build's repository
+identity and archive digest:
+
+```bash
+gh attestation verify ARCHIVE --repo LeeEirc/tclientlib
+```
+
+Extract the archive and place `tclient` (or `tclient.exe`) on your PATH. Run
+`tclient --version` to see the version, commit, build date, Go version, and
+target platform. Source builds without injected release metadata use the
+available Go module/VCS information and report an unknown build date.
+
 ## Build and connect
 
 ```bash
@@ -184,10 +214,10 @@ Relevant specifications: [RFC 854](https://www.rfc-editor.org/rfc/rfc854),
 [RFC 1571](https://www.rfc-editor.org/rfc/rfc1571), and
 [RFC 1572](https://www.rfc-editor.org/rfc/rfc1572).
 
-## Old example entry point
+## Migrating old example commands
 
-`_example/telnet_client` delegates to the same implementation as `cmd/tclient`.
-It no longer maintains its own terminal, signal, password, or trace logic.
-Its flags have changed: use positional `host [port]` instead of `-ip` and
-`-port`; use `--auto-login --user ... --ask-pass` instead of `-username` and
-`-password`.
+The duplicate `_example/telnet_client` entry point has been removed. Use the
+installed `tclient` command or `go run ./cmd/tclient` from the repository root.
+Replace `-ip` and `-port` with positional `host [port]`, and replace `-username`
+and `-password` with `--auto-login --user ... --ask-pass`. The transparent
+`_example/monitor` remains a separate debugging example.
