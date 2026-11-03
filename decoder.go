@@ -28,6 +28,9 @@ type telnetEvent struct {
 	command    byte
 	option     byte
 	parameters []byte
+	// dataOffset is the number of application bytes decoded before this
+	// event in this feed call. It preserves option changes within a read.
+	dataOffset int
 }
 
 type decoder struct {
@@ -67,7 +70,7 @@ func (d *decoder) feed(input []byte) ([]byte, []telnetEvent, error) {
 			case sb:
 				d.state = decoderSubnegotiationOption
 			case nop, dm, brk, ip, ao, ayt, ec, el, ga:
-				events = append(events, telnetEvent{typ: commandEvent, command: value})
+				events = append(events, telnetEvent{typ: commandEvent, command: value, dataOffset: len(data)})
 				d.state = decoderData
 			default:
 				// Unknown Telnet commands are consumed, never exposed as terminal data.
@@ -76,7 +79,7 @@ func (d *decoder) feed(input []byte) ([]byte, []telnetEvent, error) {
 
 		case decoderNegotiationOption:
 			events = append(events, telnetEvent{
-				typ: negotiationEvent, command: d.negotiationCommand, option: value,
+				typ: negotiationEvent, command: d.negotiationCommand, option: value, dataOffset: len(data),
 			})
 			d.state = decoderData
 
@@ -101,6 +104,7 @@ func (d *decoder) feed(input []byte) ([]byte, []telnetEvent, error) {
 					typ:        subnegotiationEvent,
 					option:     d.subOption,
 					parameters: append([]byte(nil), d.subData...),
+					dataOffset: len(data),
 				})
 				d.subData = d.subData[:0]
 				d.state = decoderData
