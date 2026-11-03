@@ -3,6 +3,7 @@ package tclientlib
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,12 +11,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
 const (
-	maxContinueResponses = 3
+	maxContinueResponses  = 3
 	maxDefaultPromptBytes = 128
+	loginReadBufferSize   = 4096
+	maxPartialPromptBytes = 512
 )
 
 var (
@@ -156,19 +160,47 @@ const (
 	loginPasswordChangeRequired
 )
 
+// Narrative results are only authoritative on a completed logical line. A
+// Read boundary is not an end-of-line marker.
+func (m *loginMachine) messageResult(line []byte, trace *tracer) loginResult {
+	if len(bytes.TrimSpace(line)) == 0 {
+		return loginPending
+	}
+	if fullLineMatch(m.patterns.passwordChange, line) {
+		trace.printf("login password-change message matched phase=%s", m.phase)
+		return loginPasswordChangeRequired
+	}
+	if fullLineMatch(m.patterns.failure, line) {
+		trace.printf("login failure message matched phase=%s", m.phase)
+		return loginFailed
+	}
+	return loginPending
+}
+
 func (m *loginMachine) handleLine(writer io.Writer, line []byte, trace *tracer) (loginResult, error) {
+	if result := m.messageResult(line, trace); result != loginPending {
+		return result, nil
+	}
+	return m.handlePrompt(writer, line, trace)
+}
+
+// Interactive prompts normally have no newline. Check them only at the end of
+// the currently available chunk, never after every character of a banner.
+func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer) (loginResult, error) {
+	if len(line) > maxPartialPromptBytes || !utf8.Valid(line) {
+		return loginPending, nil
+	}
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return loginPending, nil
 	}
 
-	if fullLineMatch(m.patterns.passwordChange, line) {
-		trace.printf("login password-change prompt matched phase=%s", m.phase)
+	// Require input punctuation for an incomplete password-change prompt.
+	// "New password policy: ..." must not match the prefix "New password".
+	if (bytes.HasSuffix(line, []byte(":")) || bytes.HasSuffix(line, []byte("："))) &&
+		fullLineMatch(m.patterns.passwordChange, line) {
+		trace.printf("login password-change input prompt matched phase=%s", m.phase)
 		return loginPasswordChangeRequired, nil
-	}
-	if fullLineMatch(m.patterns.failure, line) {
-		trace.printf("login failure prompt matched phase=%s", m.phase)
-		return loginFailed, nil
 	}
 	if fullLineMatch(m.patterns.continuePrompt, line) {
 		if m.continueResponses >= maxContinueResponses {
@@ -229,10 +261,13 @@ func defaultShellPromptMatches(line []byte) bool {
 	if len(line) == 0 || len(line) > maxDefaultPromptBytes {
 		return false
 	}
+	if isBannerLikeShellPrompt(string(line)) {
+		return false
+	}
 	if defaultMarkedBracketShellPrompt.Match(line) {
 		return true
 	}
-	if defaultTokenShellPrompt.Match(line) && !isBannerLikeShellPrompt(string(line)) {
+	if defaultTokenShellPrompt.Match(line) {
 		return true
 	}
 
@@ -259,11 +294,12 @@ func isBannerLabel(value string) bool {
 func isBannerLikeShellPrompt(value string) bool {
 	value = strings.TrimSpace(strings.TrimRight(value, "#$>%"))
 	fields := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
 	})
 	for _, field := range fields {
 		switch field {
-		case "login", "successful", "failed", "failure", "password", "warning", "notice", "error", "press", "hit", "unauthorized", "denied", "attempt", "attempts", "continue":
+		case "login", "successful", "failed", "failure", "password", "warning", "notice", "error", "press", "hit", "unauthorized", "denied", "attempt", "attempts", "continue",
+			"登录成功", "登录失败", "认证成功", "认证失败", "密码错误", "密码过期", "系统警告", "警告", "错误":
 			return true
 		}
 	}
@@ -279,52 +315,76 @@ func fullLineMatch(pattern *regexp.Regexp, line []byte) bool {
 	return match != nil && match[0] == 0 && match[1] == len(line)
 }
 
-func login(conn net.Conn, reader *bufio.Reader, writer io.Writer, config clientConfig, trace *tracer) error {
+// login returns only a line terminator already consumed while confirming a
+// prompt. All other bytes after the match stay in the shared buffered reader.
+func login(conn net.Conn, reader *bufio.Reader, writer io.Writer, config clientConfig, trace *tracer) (replay string, err error) {
 	machine := newLoginMachine(config)
 	text := newLoginText(config.maxLoginBuffer)
 	trace.printf("login start user=%t password=%t timeout=%s",
 		config.User != "", config.Password != "", config.Timeout)
 	guard := startLoginGuard(conn, config.Timeout)
-	defer guard.stop()
+	defer func() {
+		guard.stop()
+		// Do not return a usable Client if the timer won the completion race.
+		if guard.didExpire() && err == nil {
+			replay = ""
+			err = fmt.Errorf("%w after %s", ErrLoginTimeout, config.Timeout)
+		}
+	}()
 
 	for {
-		value, readErr := reader.ReadByte()
-		if readErr == nil {
-			lines, current := text.feed([]byte{value})
-			for _, line := range lines {
-				result, err := machine.handleLine(writer, line, trace)
-				if err != nil {
-					trace.printf("login write error: %v", err)
-					return err
-				}
-				if done, resultErr := resolveLoginResult(result, trace); done {
-					return resultErr
+		// Peek(1) fills the 4 KiB buffer without waiting for a full block. Scan
+		// what is already available, then discard only the bytes we consumed.
+		if _, readErr := reader.Peek(1); readErr != nil {
+			// A peer may close (or stop responding) after an error without a
+			// newline. Classify that final message, but never send credentials
+			// or infer success on a closed/timed-out connection.
+			if errors.Is(readErr, io.EOF) || guard.didExpire() {
+				if done, resultErr := resolveLoginResult(machine.messageResult(text.current(), trace), trace); done {
+					return "", resultErr
 				}
 			}
+			if guard.didExpire() {
+				return "", fmt.Errorf("%w after %s", ErrLoginTimeout, config.Timeout)
+			}
+			return "", readErr
+		}
+		chunk, _ := reader.Peek(reader.Buffered())
+		consumed, result, ending, scanErr := machine.consumeChunk(writer, text, chunk, trace)
+		_, _ = reader.Discard(consumed)
+		if scanErr != nil {
+			if guard.didExpire() {
+				return "", fmt.Errorf("%w after %s", ErrLoginTimeout, config.Timeout)
+			}
+			return "", scanErr
+		}
+		if done, resultErr := resolveLoginResult(result, trace); done {
+			return ending, resultErr
+		}
+	}
+}
 
-			if len(bytes.TrimSpace(current)) > 0 {
-				result, err := machine.handleLine(writer, current, trace)
-				if err != nil {
-					trace.printf("login write error: %v", err)
-					return err
-				}
-				if isLoginAction(result) {
-					text.consumeCurrent()
-				}
-				if done, resultErr := resolveLoginResult(result, trace); done {
-					return resultErr
-				}
-			}
+func (m *loginMachine) consumeChunk(writer io.Writer, text *loginText, chunk []byte, trace *tracer) (int, loginResult, string, error) {
+	for index, value := range chunk {
+		line, ending := text.feedByte(value)
+		if ending == "" {
 			continue
 		}
-
-		if guard.didExpire() {
-			trace.printf("login timeout after %s", config.Timeout)
-			return fmt.Errorf("%w after %s", ErrLoginTimeout, config.Timeout)
+		result, err := m.handleLine(writer, line, trace)
+		if err != nil || result == loginSuccess || result == loginFailed || result == loginPasswordChangeRequired {
+			return index + 1, result, ending, err
 		}
-		trace.printf("login read error: %v", readErr)
-		return readErr
 	}
+
+	result, err := m.handlePrompt(writer, text.current(), trace)
+	ending := ""
+	if result == loginSuccess && text.pendingCR {
+		ending = "\r"
+	}
+	if isLoginAction(result) {
+		text.consumeCurrent()
+	}
+	return len(chunk), result, ending, err
 }
 
 func isLoginAction(result loginResult) bool {
@@ -373,137 +433,4 @@ func writeFull(writer io.Writer, data []byte) error {
 		data = data[n:]
 	}
 	return nil
-}
-
-type loginEscapeState uint8
-
-const (
-	loginEscapeNone loginEscapeState = iota
-	loginEscapeStart
-	loginEscapeCSI
-	loginEscapeOSC
-	loginEscapeOSCEscape
-)
-
-type loginText struct {
-	line      []byte
-	maxLine   int
-	pendingCR bool
-	escape    loginEscapeState
-}
-
-func newLoginText(maxLine int) *loginText {
-	return &loginText{maxLine: maxLine}
-}
-
-func (t *loginText) feed(input []byte) ([][]byte, []byte) {
-	lines := make([][]byte, 0, 2)
-	for _, value := range input {
-		if t.consumeEscape(value) {
-			continue
-		}
-
-		if t.pendingCR {
-			t.pendingCR = false
-			if value == '\n' {
-				lines = append(lines, t.finishLine())
-				continue
-			}
-			// A bare carriage return moves the terminal cursor back to column 0.
-			t.line = t.line[:0]
-		}
-
-		switch value {
-		case 0, '\a':
-			continue
-		case '\x1b':
-			t.escape = loginEscapeStart
-		case '\r':
-			t.pendingCR = true
-		case '\n':
-			lines = append(lines, t.finishLine())
-		case '\b', 0x7f:
-			t.removeLastRune()
-		case '\t':
-			t.appendByte(' ')
-		default:
-			if value < 0x20 {
-				continue
-			}
-			t.appendByte(value)
-		}
-	}
-	return lines, append([]byte(nil), t.line...)
-}
-
-func (t *loginText) consumeEscape(value byte) bool {
-	switch t.escape {
-	case loginEscapeNone:
-		return false
-	case loginEscapeStart:
-		switch value {
-		case '[':
-			t.escape = loginEscapeCSI
-		case ']':
-			t.escape = loginEscapeOSC
-		default:
-			t.escape = loginEscapeNone
-		}
-		return true
-	case loginEscapeCSI:
-		if value >= 0x40 && value <= 0x7e {
-			t.escape = loginEscapeNone
-		}
-		return true
-	case loginEscapeOSC:
-		switch value {
-		case '\a':
-			t.escape = loginEscapeNone
-		case '\x1b':
-			t.escape = loginEscapeOSCEscape
-		}
-		return true
-	case loginEscapeOSCEscape:
-		if value == '\\' {
-			t.escape = loginEscapeNone
-		} else {
-			t.escape = loginEscapeOSC
-		}
-		return true
-	default:
-		t.escape = loginEscapeNone
-		return true
-	}
-}
-
-func (t *loginText) finishLine() []byte {
-	line := append([]byte(nil), t.line...)
-	t.line = t.line[:0]
-	return line
-}
-
-func (t *loginText) consumeCurrent() {
-	t.line = t.line[:0]
-	t.pendingCR = false
-}
-
-func (t *loginText) appendByte(value byte) {
-	t.line = append(t.line, value)
-	if len(t.line) <= t.maxLine {
-		return
-	}
-	drop := len(t.line) - t.maxLine
-	copy(t.line, t.line[drop:])
-	t.line = t.line[:t.maxLine]
-}
-
-func (t *loginText) removeLastRune() {
-	if len(t.line) == 0 {
-		return
-	}
-	_, size := utf8.DecodeLastRune(t.line)
-	if size <= 0 {
-		size = 1
-	}
-	t.line = t.line[:len(t.line)-size]
 }

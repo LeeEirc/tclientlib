@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 )
 
 const maxTraceBytes = 256
 
 type tracer struct {
-	writer io.Writer
-	mu     sync.Mutex
+	writer         io.Writer
+	mu             sync.Mutex
+	redactPayloads atomic.Bool
 }
 
 func newTracer(writer io.Writer) *tracer {
@@ -18,6 +20,14 @@ func newTracer(writer io.Writer) *tracer {
 		return nil
 	}
 	return &tracer{writer: writer}
+}
+
+// Redaction lives at the logging boundary so no wire, application, or SB
+// payload path can accidentally bypass it during authentication.
+func (t *tracer) setRedaction(enabled bool) {
+	if t != nil {
+		t.redactPayloads.Store(enabled)
+	}
 }
 
 func (t *tracer) printf(format string, args ...interface{}) {
@@ -31,6 +41,10 @@ func (t *tracer) printf(format string, args ...interface{}) {
 
 func (t *tracer) bytes(scope, direction string, data []byte) {
 	if t == nil || len(data) == 0 {
+		return
+	}
+	if t.redactPayloads.Load() {
+		t.redacted(scope, direction, len(data))
 		return
 	}
 	sample, suffix := boundedTraceData(data)
@@ -53,9 +67,7 @@ func (t *tracer) event(direction string, event telnetEvent) {
 		t.printf("event %s %s %s", direction,
 			telnetCommandName(event.command), telnetOptionName(event.option))
 	case subnegotiationEvent:
-		sample, suffix := boundedTraceData(event.parameters)
-		t.printf("event %s SB %s len=%d data=% x%s", direction,
-			telnetOptionName(event.option), len(event.parameters), sample, suffix)
+		t.subnegotiation("event", direction, event.option, event.parameters)
 	case commandEvent:
 		t.printf("event %s %s", direction, telnetCommandName(event.command))
 	}
@@ -66,13 +78,22 @@ func (t *tracer) packet(direction string, packet optionPacket) {
 		return
 	}
 	if packet.command == sb {
-		sample, suffix := boundedTraceData(packet.parameters)
-		t.printf("packet %s SB %s len=%d data=% x%s", direction,
-			telnetOptionName(packet.option), len(packet.parameters), sample, suffix)
+		t.subnegotiation("packet", direction, packet.option, packet.parameters)
 		return
 	}
 	t.printf("packet %s %s %s", direction,
 		telnetCommandName(packet.command), telnetOptionName(packet.option))
+}
+
+func (t *tracer) subnegotiation(kind, direction string, option byte, data []byte) {
+	if t.redactPayloads.Load() {
+		t.printf("%s %s SB %s len=%d data=<redacted>", kind, direction,
+			telnetOptionName(option), len(data))
+		return
+	}
+	sample, suffix := boundedTraceData(data)
+	t.printf("%s %s SB %s len=%d data=% x%s", kind, direction,
+		telnetOptionName(option), len(data), sample, suffix)
 }
 
 func boundedTraceData(data []byte) ([]byte, string) {
