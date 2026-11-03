@@ -38,7 +38,8 @@ archives:
           - zip
     files:
       - README.md
-      - docs/cli.md
+      - CHANGELOG.md
+      - docs/*.md
 
 checksum:
   name_template: checksums.txt
@@ -51,10 +52,20 @@ release:
   draft: true
   prerelease: auto
   replace_existing_draft: true
+  header: |
+    ## Upgrade notes
+
+    Read the [changelog and migration guide](https://github.com/LeeEirc/tclientlib/blob/{{ .Tag }}/CHANGELOG.md)
+    for release highlights and compatibility changes.
+
+    **Upgrading from v0.0.x:** v0.1.0 changes the library configuration API and
+    requires Go 1.20 or later. `WindowChange` now takes **height before width**;
+    old calls still compile, so update them explicitly. The migration guide
+    also covers prompt matching, login line endings, and removed APIs.
   footer: |
     ## Downloads
 
-    Archives contain the `tclient` binary and CLI documentation. Verify the
+    Archives contain the `tclient` binary, changelog, and CLI documentation. Verify the
     download against `checksums.txt`, then run `tclient --version` to inspect
     its version and build information. GitHub build attestations are available
     for the archives.

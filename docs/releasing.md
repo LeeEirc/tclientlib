@@ -12,6 +12,10 @@ after seven days.
 
 ## Start a release
 
+Update [CHANGELOG.md](../CHANGELOG.md) with the new version's user-visible
+changes and migration steps before merging the release commit. Generated
+commit lists supplement these notes; they do not replace API upgrade guidance.
+
 In GitHub, open **Actions → Release → Run workflow**, select `master`, and
 enter the version tag. For example, use `v0.1.0` for a stable release or
 `v0.1.0-rc.1` for a release candidate.
@@ -49,7 +53,7 @@ build time, Go compiler version, and target platform.
 | macOS | amd64, arm64 | `tclient_VERSION_darwin_ARCH.tar.gz` |
 | Windows | amd64, arm64 | `tclient_VERSION_windows_ARCH.zip` |
 
-Each archive contains the binary, README, and CLI guide. The release also
+Each archive contains the binary, README, changelog, and documentation guides. The release also
 contains `checksums.txt` with SHA-256 hashes. Windows binaries support
 redirected sessions; interactive terminal support currently targets Unix.
 Cross-compilation does not replace platform runtime testing: native CI runs

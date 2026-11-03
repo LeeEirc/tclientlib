@@ -6,6 +6,10 @@ constructors return a ready-to-use client (with optional prompt-based login),
 application reads and writes never expose protocol framing, and protocol controls
 use explicit methods.
 
+Upgrading from `v0.0.x`? Read the [changelog and migration guide](CHANGELOG.md),
+including the changed `WindowChange(height, width)` argument order and
+configuration API.
+
 ## Command-line client
 
 Download a versioned binary from [GitHub Releases](https://github.com/LeeEirc/tclientlib/releases).
