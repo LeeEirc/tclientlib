@@ -185,11 +185,19 @@ func (m *loginMachine) messageResult(line []byte, trace *tracer) loginResult {
 func (m *loginMachine) handleLine(writer io.Writer, line []byte, trace *tracer) (loginResult, error) {
 	// Completed lines are bounded by the logical-line limit, not the smaller
 	// partial-prompt budget. Custom prompts may legitimately exceed 512 bytes.
-	if len(line) > m.config.maxLoginBuffer || !utf8.Valid(line) {
+	if len(line) > m.config.maxLoginBuffer {
 		return loginPending, nil
 	}
+	// A diagnostic can contain a legacy-encoded username. Do not discard
+	// an otherwise recognizable failure or password-change message just
+	// because that field is not UTF-8; a later shell prompt must not win.
 	if result := m.messageResult(line, trace); result != loginPending {
 		return result, nil
+	}
+	// Only interactive actions and success require valid UTF-8. Incomplete
+	// lines remain guarded by handlePartialLine until a real boundary.
+	if !utf8.Valid(line) {
+		return loginPending, nil
 	}
 	return m.handlePrompt(writer, line, trace)
 }
