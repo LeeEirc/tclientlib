@@ -16,18 +16,35 @@ Update [CHANGELOG.md](../CHANGELOG.md) with the new version's user-visible
 changes and migration steps before merging the release commit. Generated
 commit lists supplement these notes; they do not replace API upgrade guidance.
 
-In GitHub, open **Actions → Release → Run workflow**, select `master`, and
-enter the version tag. For example, use `v0.1.0` for a stable release or
-`v0.1.0-rc.1` for a release candidate.
+### Recommended: merge a version PR
 
-The workflow tests the exact commit selected when it starts. After the tests
-pass, it creates an annotated tag if that tag does not already exist. An
-existing tag must point to the same commit. It then builds and publishes from
-that commit, even if `master` advances while the workflow is running. A tag
-created with the workflow's `GITHUB_TOKEN` does not start another workflow;
-the same run continues the release.
+1. Set `VERSION` to the intended tag on a single line, for example
+   `v0.1.0` or `v0.1.0-rc.1`, and update the changelog.
+2. Open a PR describing the version, release highlights, and any migration
+   steps. Review its checks and snapshot archives.
+3. Merge the reviewed PR into `master`. The push that changes `VERSION` starts
+   the `Release` workflow automatically.
 
-Alternatively, push an annotated tag from a reviewed checkout:
+**The initial `VERSION` value is `v0.1.0`. Merging the PR that introduces this
+file starts the `v0.1.0` release after the release checks pass.**
+
+Opening or updating a PR only runs checks and creates snapshot artifacts.
+Ordinary pushes to `master` that leave `VERSION` unchanged do not start a
+release. A direct push to `master` that changes `VERSION` also starts one, so
+treat a version-file change as an explicit request to publish.
+
+`VERSION` records the requested release version, not whether publication has
+completed. It does not change the version reported by ordinary developer
+builds. Release binaries receive metadata from GoReleaser; ordinary builds and
+`go install` continue to use their embedded module/VCS metadata where available.
+
+### Other entry points
+
+For a manual run, open **Actions → Release → Run workflow**, select `master`,
+and enter the version tag. The entered tag is used instead of `VERSION`.
+
+Alternatively, push an annotated tag from a reviewed checkout already merged
+into `master`:
 
 ```bash
 git switch master
@@ -36,8 +53,25 @@ git tag -a v0.1.0 -m "v0.1.0"
 git push origin v0.1.0
 ```
 
-Choose one entry point for a version. Both run the same tests and release job.
-The tag-push path uses the existing tag and never moves it.
+The pushed tag is used instead of `VERSION`; this path never creates or moves
+a tag. Choose one entry point for each version.
+
+### Commit and tag guarantees
+
+All three entry points resolve and validate the version, then run the same
+tests and release job. The workflow uses the exact commit selected when it
+starts: a version-file release reads `VERSION` from that commit, not from a
+later `master`. Testing, tagging, building, and publication remain on that
+commit even if `master` advances during the run.
+
+After the tests pass, version-file and manual releases create an annotated
+tag if it does not already exist. An existing tag must point to the same
+commit. A tag created with the workflow's `GITHUB_TOKEN` does not start another
+workflow; the same run continues the release.
+
+Publication is serialized by the resolved version across all three entry
+points. A published version cannot be overwritten, even if another entry point
+is used to request it again.
 
 ## What gets published
 
@@ -53,9 +87,9 @@ build time, Go compiler version, and target platform.
 | macOS | amd64, arm64 | `tclient_VERSION_darwin_ARCH.tar.gz` |
 | Windows | amd64, arm64 | `tclient_VERSION_windows_ARCH.zip` |
 
-Each archive contains the binary, README, changelog, and documentation guides. The release also
-contains `checksums.txt` with SHA-256 hashes. Windows binaries support
-redirected sessions; interactive terminal support currently targets Unix.
+Each archive contains the binary, README, changelog, and documentation guides.
+The release also contains `checksums.txt` with SHA-256 hashes. Windows binaries
+support redirected sessions; interactive terminal support currently targets Unix.
 Cross-compilation does not replace platform runtime testing: native CI runs
 on Linux and Windows amd64, and the PTY suite runs on Linux.
 
