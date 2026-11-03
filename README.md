@@ -2,8 +2,31 @@
 
 `tclientlib` is a small Go Telnet client for interactive host and network-device
 sessions. Its public API follows the same principle as `golang.org/x/crypto/ssh`:
-constructors return a ready-to-use authenticated client, application reads and
-writes never expose protocol framing, and protocol controls use explicit methods.
+constructors return a ready-to-use client (with optional prompt-based login),
+application reads and writes never expose protocol framing, and protocol controls
+use explicit methods.
+
+## Command-line client
+
+Install the interactive client with Go 1.20 or later:
+
+```bash
+go install github.com/LeeEirc/tclientlib/cmd/tclient@latest
+```
+
+Or build the current checkout:
+
+```bash
+go build ./cmd/tclient
+./tclient 192.0.2.10 23
+./tclient --auto-login --user admin --ask-pass 192.0.2.10 23
+./tclient --charset gbk --line-ending crnul 192.0.2.10 23
+```
+
+The default is manual interaction. `Ctrl+]` opens local commands such as `help`,
+`status`, `send brk`, and `quit`. The client handles terminal restoration, window
+changes, negotiated remote echo, and redirected input. See [the CLI guide](docs/cli.md)
+for options, exit codes, tracing, and compatibility boundaries.
 
 ## API
 
@@ -37,19 +60,38 @@ func (*Client) Write([]byte) (int, error)
 func (*Client) Close() error
 func (*Client) WindowChange(height, width int) error
 func (*Client) SendCommand(Command) error
+func (*Client) TerminalMode() TerminalMode
 ```
 
 There is deliberately one I/O path:
 
 - `Client.Write` always writes terminal application data and escapes Telnet
   `IAC` bytes internally.
-- `Client.Read` returns terminal application data only.
+- `Client.Read` returns terminal application data only, removing the protocol
+  NUL after a carriage return in the non-BINARY receive direction.
 - `SendCommand` sends Telnet controls such as `CommandBreak`.
 - `Dial` and `NewClientConn` perform initial prompt-based login when credentials
   are configured.
 
 The library does not expose raw writes, a second data writer, or a separate
 public login lifecycle.
+
+`TerminalMode()` returns a concurrency-safe snapshot of `RemoteEcho`,
+`LocalSuppressGA`, `RemoteSuppressGA`, `SendBinary`, and `ReceiveBinary`. Modes
+change as `Read` consumes negotiation packets. The library never changes the
+caller's local terminal and does not start a background reader.
+
+Receive NVT decoding follows the exact position of BINARY negotiation in the
+stream, including changes within one network read. `CR LF` and standalone NUL
+are retained; `CR NUL` becomes `CR` outside BINARY mode. `Client.Write` continues
+to preserve caller-supplied CR/LF/NUL bytes and escape IAC. The caller is
+responsible for choosing appropriate outgoing line endings; the CLI maps TTY
+Enter keys and automatic login uses `LineEnding`.
+
+The client accepts SGA in both directions. Environment negotiation exposes only
+the explicitly configured `User`: requested variables are returned in order,
+unknown variables are marked undefined, and environment control bytes are
+escaped. Process environment variables are never exported.
 
 ## Basic usage
 
@@ -219,12 +261,19 @@ active; semantic negotiation and login-state events remain visible.
 **Warning:** post-login commands and terminal output may still contain sensitive
 information. Store traces securely and remove them after troubleshooting.
 
-The example client can write a trace directly:
+The CLI can write a trace explicitly (the file must not already exist):
 
 ```bash
-cd _example/telnet_client
-go run . -ip 192.0.2.10 -port 23 -username admin -trace-file telnet.trace
+go run ./cmd/tclient --trace-file telnet.trace 192.0.2.10 23
 ```
+
+Manual login does not run the automatic-login redaction phase. A trace can
+therefore contain manually typed passwords as well as commands and output. The
+CLI warns when tracing is enabled and creates the file with mode `0600`.
+
+`_example/telnet_client` now delegates to the same CLI, with the same flags.
+Replace its old `-ip`/`-port` flags with positional `host [port]`, and replace
+`-username`/`-password` with `--auto-login --user ... --ask-pass`.
 
 For failures involving another Telnet client, or for observing traffic without
 changing application code, use the transparent monitor:
