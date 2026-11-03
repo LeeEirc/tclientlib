@@ -20,7 +20,7 @@ import (
 // Run runs tclient and returns an exit code after restoring the local terminal.
 // Codes are 0 for normal completion, 1 for connection or I/O errors, 2 for
 // invalid arguments, and 3 for automatic-login failures. It does not exit the
-// process, so example commands can share the same implementation.
+// process.
 func Run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	o, err := parseOptions(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
@@ -29,6 +29,13 @@ func Run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "tclient:", err)
 		return 2
+	}
+	if o.version {
+		if _, err := fmt.Fprintln(stdout, versionString()); err != nil {
+			fmt.Fprintln(stderr, "tclient: write version:", err)
+			return 1
+		}
+		return 0
 	}
 	isTTY, err := fileIsTerminal(stdin)
 	if err != nil {

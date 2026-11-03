@@ -6,9 +6,18 @@ constructors return a ready-to-use client (with optional prompt-based login),
 application reads and writes never expose protocol framing, and protocol controls
 use explicit methods.
 
+Upgrading from `v0.0.x`? Read the [changelog and migration guide](CHANGELOG.md),
+including the changed `WindowChange(height, width)` argument order and
+configuration API.
+
 ## Command-line client
 
-Install the interactive client with Go 1.20 or later:
+Download a versioned binary from [GitHub Releases](https://github.com/LeeEirc/tclientlib/releases).
+Archives are available for Linux, macOS, and Windows on amd64 and arm64, together
+with SHA-256 checksums and GitHub build attestations. See the
+[installation and verification instructions](docs/cli.md#install-a-release).
+
+Alternatively, install the interactive client with Go 1.20 or later:
 
 ```bash
 go install github.com/LeeEirc/tclientlib/cmd/tclient@latest
@@ -18,6 +27,7 @@ Or build the current checkout:
 
 ```bash
 go build ./cmd/tclient
+./tclient --version
 ./tclient 192.0.2.10 23
 ./tclient --auto-login --user admin --ask-pass 192.0.2.10 23
 ./tclient --charset gbk --line-ending crnul 192.0.2.10 23
@@ -271,10 +281,6 @@ Manual login does not run the automatic-login redaction phase. A trace can
 therefore contain manually typed passwords as well as commands and output. The
 CLI warns when tracing is enabled and creates the file with mode `0600`.
 
-`_example/telnet_client` now delegates to the same CLI, with the same flags.
-Replace its old `-ip`/`-port` flags with positional `host [port]`, and replace
-`-username`/`-password` with `--auto-login --user ... --ask-pass`.
-
 For failures involving another Telnet client, or for observing traffic without
 changing application code, use the transparent monitor:
 
@@ -289,6 +295,14 @@ stream chunks and does not depend on exported parser internals.
 The monitor and `Trace` observe the TCP byte stream. User-space `Read` boundaries
 are not the original TCP packet boundaries. Use `tcpdump` or Wireshark when the
 actual network packet layout, retransmission, or timing is relevant.
+
+## Releases
+
+The Go library and `cmd/tclient` share one semantic-version tag. The release
+workflow runs the test matrix, builds all six platform archives, uploads a draft,
+and publishes it only after build attestations succeed. Maintainers can start a
+release from GitHub Actions or push a version tag; see the
+[release guide](docs/releasing.md).
 
 ## Scope and privilege switching
 
