@@ -37,6 +37,25 @@ password. Custom `PasswordChangePrompt` and `FailurePrompt` still replace their
 respective defaults; their narrative matches obey the same completion rules.
 Other custom prompts remain full matches against the current normalized line.
 
+An incomplete line that matches a failure or password-change narrative is
+**pending**, not eligible for another prompt interpretation. For example,
+`Invalid user>` cannot become a successful shell prompt just because its CRLF
+arrives in the next read. Keep its text and login state unchanged until the
+line completes, reaches EOF/timeout, or grows into a non-diagnostic banner.
+This precedence applies to custom rules as well and prevents credential or
+continuation writes from overlapping patterns.
+
+The 512-byte limit is only the budget for unfinished prompts. A completed
+CRLF/LF line may use the logical-line budget (64 KiB), so longer custom prompts
+remain supported without increasing repeated partial-line scanning. Default
+shell prompts still have their separate 128-byte limit.
+
+Default shell detection recognizes a structured bracketed Unix prompt such as
+`[admin@login ~]$` or `[admin@router /var/log/error]#` before applying the banner
+word filter. User, host, and path components are not narrative labels. Plain
+labels such as `[Warning]#` and `[ERROR]%` remain excluded. Explicit failure
+and password-change rules retain precedence over shell detection.
+
 Overlong logical lines are ignored until a line reset or ending. They are not
 converted into a sliding suffix that could accidentally look like a prompt.
 
@@ -80,3 +99,9 @@ UTF-8 and ANSI fragments, long banners, environment subnegotiation logs, and
 cleanup writes. Fuzz targets check diagnostic-banner chunking and oversized
 subnegotiation recovery. `BenchmarkLoginLongBanner` measures the 1 KiB, 4 KiB,
 and 64 KiB banner paths without adding timing assertions to unit tests.
+
+Prompt regression tests additionally cover failure messages ending in `>`,
+separated CR/LF, overlapping custom rules, EOF/timeout, completed prompts above
+512 bytes, the 64 KiB line limit, and bracketed Unix prompt components. The
+`FuzzFailurePromptChunking` target checks that fragmenting an explicit failure
+never produces a usable client or extra authentication writes.
