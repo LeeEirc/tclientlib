@@ -185,7 +185,7 @@ func (t *transport) windowChange(height, width int) error {
 }
 
 func (t *transport) handleEvent(event telnetEvent) error {
-	if event.typ != negotiationEvent && event.typ != subnegotiationEvent {
+	if !t.eventNeedsWrite(event) {
 		return nil
 	}
 	// Keep option state changes and their replies ahead of concurrent writes.
@@ -199,6 +199,49 @@ func (t *transport) handleEvent(event telnetEvent) error {
 		return t.writePacketsLocked(t.handleSubnegotiation(event.option, event.parameters)...)
 	default:
 		return nil
+	}
+}
+
+// Read serializes incoming option changes. WindowChange only updates dimensions,
+// so this read-only check can skip no-op events without taking writeMu. Actual
+// changes and replies are still handled together under writeMu -> stateMu.
+// Otherwise a duplicate or ignored event could block reading behind a full
+// application send buffer, even though it has nothing to send to the peer.
+func (t *transport) eventNeedsWrite(event telnetEvent) bool {
+	if event.typ != negotiationEvent && event.typ != subnegotiationEvent {
+		return false
+	}
+	t.stateMu.Lock()
+	defer t.stateMu.Unlock()
+	if event.typ == negotiationEvent {
+		switch event.command {
+		case do:
+			return !t.supportsLocalOption(event.option) || !t.localOptions[event.option]
+		case dont:
+			return t.localOptions[event.option]
+		case will:
+			return !t.supportsRemoteOption(event.option) || !t.remoteOptions[event.option]
+		case wont:
+			return t.remoteOptions[event.option]
+		default:
+			return false
+		}
+	}
+	if len(event.parameters) == 0 || event.parameters[0] != 1 || !t.localOptions[event.option] {
+		return false
+	}
+	switch event.option {
+	case terminalType, terminalSpeed:
+		return true
+	case oldEnvironment, newEnvironment:
+		// Validate before waiting for the writer; malformed requests have no
+		// reply and must not block either. Do not change the OLD-ENVIRON dialect
+		// here: handleSubnegotiation commits it with the actual response.
+		params, _ := environmentResponse(event.parameters[1:], t.config.User,
+			event.option == oldEnvironment, t.oldEnvironmentReversed, t.config.maxSubnegotiation)
+		return params != nil
+	default:
+		return false
 	}
 }
 

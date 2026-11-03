@@ -195,6 +195,113 @@ func TestCommandOutputDoesNotWaitForBlockedApplicationWrite(t *testing.T) {
 	}
 }
 
+func TestNoReplyEventsDoNotWaitForBlockedApplicationWrite(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup []byte
+		reply []byte
+		event []byte
+		data  []byte
+		want  []byte
+	}{
+		{"initial WONT ECHO", nil, nil, []byte{iac, wont, echoOption}, nil, nil},
+		{"initial DONT NAWS", nil, nil, []byte{iac, dont, windowSize}, nil, nil},
+		{"duplicate WILL ECHO", []byte{iac, will, echoOption}, []byte{iac, do, echoOption}, []byte{iac, will, echoOption}, nil, nil},
+		{"duplicate WILL BINARY", []byte{iac, will, binaryOption}, []byte{iac, do, binaryOption}, []byte{iac, will, binaryOption}, []byte{'\r', 0, 'x'}, []byte{'\r', 0, 'x'}},
+		{"duplicate DO NAWS", []byte{iac, do, windowSize}, append([]byte{iac, will, windowSize}, (optionPacket{command: sb, option: windowSize, parameters: []byte{0, 80, 0, 24}}).bytes()...), []byte{iac, do, windowSize}, nil, nil},
+		{"duplicate DO BINARY", []byte{iac, do, binaryOption}, []byte{iac, will, binaryOption}, []byte{iac, do, binaryOption}, []byte{'\r', 0, 'x'}, []byte{'\r', 'x'}},
+		{"unnegotiated SB", nil, nil, (optionPacket{command: sb, option: terminalType, parameters: []byte{1}}).bytes(), nil, nil},
+		{"non SEND SB", []byte{iac, do, terminalType}, []byte{iac, will, terminalType}, (optionPacket{command: sb, option: terminalType, parameters: []byte{0}}).bytes(), nil, nil},
+		{"unsupported SB", []byte{iac, do, binaryOption}, []byte{iac, will, binaryOption}, (optionPacket{command: sb, option: binaryOption, parameters: []byte{1}}).bytes(), nil, nil},
+		{"malformed environment SEND", []byte{iac, do, newEnvironment}, []byte{iac, will, newEnvironment}, (optionPacket{command: sb, option: newEnvironment, parameters: []byte("\x01\x00USER\x01")}).bytes(), nil, nil},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			server, peer := net.Pipe()
+			defer server.Close()
+			deadline := time.Now().Add(5 * time.Second)
+			_ = server.SetDeadline(deadline)
+			_ = peer.SetDeadline(deadline)
+			conn := &protocolWriteStartedConn{Conn: peer, started: make(chan struct{})}
+			config, err := prepareConfig(&ClientConfig{User: "alice"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			transport := newTransport(conn, config.transportConfig())
+			client := &Client{conn: conn, transport: transport, reader: transport, writer: transport}
+			defer client.Close()
+			if len(tc.setup) > 0 {
+				setupDone := make(chan error, 1)
+				go func() {
+					if _, err := server.Write(append(append([]byte(nil), tc.setup...), 's')); err != nil {
+						setupDone <- err
+						return
+					}
+					reply := make([]byte, len(tc.reply))
+					_, err := io.ReadFull(server, reply)
+					if err == nil && !bytes.Equal(reply, tc.reply) {
+						err = fmt.Errorf("setup reply = %v, want %v", reply, tc.reply)
+					}
+					setupDone <- err
+				}()
+				if _, err := io.ReadFull(client, make([]byte, 1)); err != nil {
+					t.Fatal(err)
+				}
+				if err := <-setupDone; err != nil {
+					t.Fatal(err)
+				}
+				// Setup has finished; observe only the following application write.
+				conn.once = sync.Once{}
+				conn.started = make(chan struct{})
+			}
+			mode := client.TerminalMode()
+			written := make(chan error, 1)
+			go func() { _, err := client.Write([]byte("input")); written <- err }()
+			<-conn.started // writeMu is held while the peer deliberately does not read.
+			data, want := tc.data, tc.want
+			if data == nil {
+				data, want = []byte("x"), []byte("x")
+			}
+			served := make(chan error, 1)
+			go func() {
+				_, err := server.Write(append(append([]byte(nil), tc.event...), data...))
+				served <- err
+			}()
+			read := make(chan error, 1)
+			go func() {
+				output := make([]byte, len(want))
+				_, err := io.ReadFull(client, output)
+				if err == nil && !bytes.Equal(output, want) {
+					err = fmt.Errorf("output = %v, want %v", output, want)
+				}
+				read <- err
+			}()
+			select {
+			case err := <-read:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("event needing no reply blocked Read behind the application Write")
+			}
+			if got := client.TerminalMode(); got != mode {
+				t.Fatalf("no-reply event changed mode: %+v, want %+v", got, mode)
+			}
+			if err := <-served; err != nil {
+				t.Fatal(err)
+			}
+			input := make([]byte, len("input"))
+			if _, err := io.ReadFull(server, input); err != nil || string(input) != "input" {
+				t.Fatalf("application write = %q, %v", input, err)
+			}
+			if err := <-written; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 type protocolWriteStartedConn struct {
 	net.Conn
 	started chan struct{}

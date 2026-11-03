@@ -46,7 +46,7 @@ func Run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 0
 	}
 	// A full diagnostic pipe must not undo cancellation after the terminal has
-	// already been restored. Reporting is best effort and bounded on Unix files.
+	// already been restored. Reporting uses the platform's cancellable outputs.
 	if ctx.Err() == nil {
 		diagnosticCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 		_, diagnostics, restore, outputErr := terminalOutputs(diagnosticCtx, io.Discard, stderr)
@@ -168,6 +168,13 @@ func run(ctx context.Context, o options, stdin *os.File, stdout, stderr io.Write
 
 func runSession(ctx context.Context, o options, stdin *os.File, output io.Writer, conn net.Conn, client *tclientlib.Client, terminal *terminalInput, flush func() error, cancelOutput context.CancelFunc) error {
 	sessionCtx, cancel := context.WithCancel(ctx)
+	var sizes <-chan terminalSize
+	if terminal != nil {
+		var stop func()
+		sizes, stop = watchTerminalSize(sessionCtx, int(stdin.Fd()))
+		defer stop()
+	}
+	resizeErrors, resizeStopped := startResizeWorker(sessionCtx, sizes, client.WindowChange)
 	sent := make(chan error, 1)
 	received := make(chan error, 1)
 	inputStopped := make(chan struct{})
@@ -188,15 +195,10 @@ func runSession(ctx context.Context, o options, stdin *os.File, output io.Writer
 		// input or negotiation may currently be blocked writing to the peer.
 		_ = conn.Close()
 		stopInput(stdin)
+		<-resizeStopped
 		<-inputStopped
 		<-outputStopped
 	}()
-	var resize <-chan os.Signal
-	if terminal != nil {
-		var stop func()
-		resize, stop = watchResize()
-		defer stop()
-	}
 	var timer *time.Timer
 	var drained <-chan time.Time
 	defer func() {
@@ -244,13 +246,8 @@ func runSession(ctx context.Context, o options, stdin *os.File, output io.Writer
 			drained = timer.C
 		case <-drained:
 			return fmt.Errorf("remote output did not finish within %s after stdin EOF", o.drainTimeout)
-		case <-resize:
-			width, height, err := term.GetSize(int(stdin.Fd()))
-			if err == nil {
-				if err := client.WindowChange(height, width); err != nil {
-					return fmt.Errorf("resize terminal: %w", err)
-				}
-			}
+		case err := <-resizeErrors:
+			return fmt.Errorf("resize terminal: %w", err)
 		}
 	}
 }

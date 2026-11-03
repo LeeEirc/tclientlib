@@ -289,6 +289,29 @@ def main():
             child.close()
             peer.close()
 
+    def login_resize_refresh():
+        peer = Peer()
+        child = TTYClient(binary, peer.port, ["--auto-login", "--user", "admin"])
+        initial = IAC + b"\xfa" + NAWS + b"\x00\x50\x00\x18" + IAC + b"\xf0"
+        resized = IAC + b"\xfa" + NAWS + b"\x00\x6f\x00\x25" + IAC + b"\xf0"
+        try:
+            peer.send(IAC + DO + NAWS + b"Login:")
+            peer.wait_bytes(initial)
+            peer.wait_bytes(b"admin\r\n")
+            # Login is still waiting for the shell prompt. No second resize
+            # signal is sent after login: the client must refresh on subscribe.
+            fcntl.ioctl(child.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 37, 111, 0, 0))
+            child.process.send_signal(signal.SIGWINCH)
+            peer.send(b"\r\nrouter#\r\nSESSION READY\r\n")
+            child.wait_output(b"SESSION READY")
+            child.wait_raw()
+            peer.wait_bytes(resized)
+            child.quit()
+            return {"wire_hex": bytes(peer.received).hex(), "refreshed_after_login": True}
+        finally:
+            child.close()
+            peer.close()
+
     def split_newlines():
         peer = Peer()
         child = TTYClient(binary, peer.port, ["--echo", "off"])
@@ -533,6 +556,7 @@ def main():
         ("escape_quit_is_local", escape_quit),
         ("sigterm_restores_terminal", terminated),
         ("naws_initial_and_resize", naws_resize),
+        ("resize_during_login_is_refreshed", login_resize_refresh),
         ("remote_local_echo_transitions", echo_transitions),
         ("split_crlf_crnul_enter_mapping", split_newlines),
         ("pipe_eof_drains_final_output", pipe_half_close),

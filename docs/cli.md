@@ -17,9 +17,10 @@ The port defaults to 23. Options go before the host. Use `--help` for the full
 option list. This client supports plain TCP Telnet; it does not encrypt traffic.
 
 Interactive terminal support currently targets Unix systems. The PTY regression
-suite runs on Linux; macOS can build the same Unix implementation. Other
-platforms reject terminal input before changing console settings; redirected
-input remains available.
+suite runs on Linux; macOS can build the same Unix implementation. Windows
+supports redirected input and output, with native CI tests for cancelling
+blocked pipe operations. Windows rejects terminal input before changing console
+settings.
 
 The default is **manual login**. Server prompts, menus, password changes, and
 subsequent interactions are displayed without trying to infer authentication
@@ -78,7 +79,9 @@ not negotiate password echo correctly.
 Local raw mode is used only for terminal input and is restored before returning
 from the CLI, including connection errors, remote disconnects, local quit, and
 handled termination signals. Terminal dimensions are sent when NAWS is
-negotiated; supported Unix systems also send changes after SIGWINCH.
+negotiated; supported Unix systems also send changes after SIGWINCH. Dimensions
+are refreshed after automatic login, and resize writes run separately from the
+session loop so a slow peer cannot block local quit or disconnect handling.
 
 For redirected input, no raw terminal mode, local echo, escape commands, or
 Enter rewriting is applied:
