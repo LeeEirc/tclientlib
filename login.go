@@ -38,6 +38,11 @@ var (
 	defaultMarkedBracketShellPrompt = regexp.MustCompile(
 		`^\[[^\[\]\r\n]{1,126}\][#$%]$`,
 	)
+	// An explicit user@host structure disambiguates Unix prompt components
+	// from banner labels, even when the host or directory is named "error".
+	defaultUnixBracketShellPrompt = regexp.MustCompile(
+		`^\[[\pL\pN_.\-]+@[\pL\pN_.:\-]+(?:[ \t]+[^\[\]\r\n]+)?\][#$%]$`,
+	)
 	defaultTokenShellPrompt = regexp.MustCompile(
 		`^(?:[\pL\pN_.:@/\\~()\-]+(?:[ \t]+[\pL\pN_.:@/\\~()\-]+){0,2})?\s*[#$>%]$`,
 	)
@@ -178,15 +183,28 @@ func (m *loginMachine) messageResult(line []byte, trace *tracer) loginResult {
 }
 
 func (m *loginMachine) handleLine(writer io.Writer, line []byte, trace *tracer) (loginResult, error) {
+	// Completed lines are bounded by the logical-line limit, not the smaller
+	// partial-prompt budget. Custom prompts may legitimately exceed 512 bytes.
+	if len(line) > m.config.maxLoginBuffer {
+		return loginPending, nil
+	}
+	// A diagnostic can contain a legacy-encoded username. Do not discard
+	// an otherwise recognizable failure or password-change message just
+	// because that field is not UTF-8; a later shell prompt must not win.
 	if result := m.messageResult(line, trace); result != loginPending {
 		return result, nil
+	}
+	// Only interactive actions and success require valid UTF-8. Incomplete
+	// lines remain guarded by handlePartialLine until a real boundary.
+	if !utf8.Valid(line) {
+		return loginPending, nil
 	}
 	return m.handlePrompt(writer, line, trace)
 }
 
 // Interactive prompts normally have no newline. Check them only at the end of
 // the currently available chunk, never after every character of a banner.
-func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer) (loginResult, error) {
+func (m *loginMachine) handlePartialLine(writer io.Writer, line []byte, trace *tracer) (loginResult, error) {
 	if len(line) > maxPartialPromptBytes || !utf8.Valid(line) {
 		return loginPending, nil
 	}
@@ -195,12 +213,31 @@ func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer
 		return loginPending, nil
 	}
 
-	// Require input punctuation for an incomplete password-change prompt.
-	// "New password policy: ..." must not match the prefix "New password".
-	if (bytes.HasSuffix(line, []byte(":")) || bytes.HasSuffix(line, []byte("："))) &&
-		fullLineMatch(m.patterns.passwordChange, line) {
-		trace.printf("login password-change input prompt matched phase=%s", m.phase)
-		return loginPasswordChangeRequired, nil
+	if fullLineMatch(m.patterns.passwordChange, line) {
+		// Input prompts can be acted on immediately; narrative messages must
+		// wait for a real line ending, EOF, or the overall login timeout.
+		if bytes.HasSuffix(line, []byte(":")) || bytes.HasSuffix(line, []byte("：")) {
+			trace.printf("login password-change input prompt matched phase=%s", m.phase)
+			return loginPasswordChangeRequired, nil
+		}
+		return loginPending, nil
+	}
+	// Pending does not mean safe to treat as a prompt. For example, "Invalid
+	// user>" also resembles a shell prompt. Keep the entire text and state
+	// until it becomes a complete diagnostic or a longer, harmless banner.
+	// Apply this before *any* prompt action, including custom prompt rules.
+	if fullLineMatch(m.patterns.failure, line) {
+		return loginPending, nil
+	}
+	return m.handlePrompt(writer, line, trace)
+}
+
+// handlePrompt runs only after the caller has validated the appropriate line
+// limit and given diagnostic messages precedence over interactive actions.
+func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer) (loginResult, error) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return loginPending, nil
 	}
 	if fullLineMatch(m.patterns.continuePrompt, line) {
 		if m.continueResponses >= maxContinueResponses {
@@ -260,6 +297,9 @@ func defaultShellPromptMatches(line []byte) bool {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 || len(line) > maxDefaultPromptBytes {
 		return false
+	}
+	if defaultUnixBracketShellPrompt.Match(line) {
+		return true
 	}
 	if isBannerLikeShellPrompt(string(line)) {
 		return false
@@ -376,7 +416,7 @@ func (m *loginMachine) consumeChunk(writer io.Writer, text *loginText, chunk []b
 		}
 	}
 
-	result, err := m.handlePrompt(writer, text.current(), trace)
+	result, err := m.handlePartialLine(writer, text.current(), trace)
 	ending := ""
 	if result == loginSuccess && text.pendingCR {
 		ending = "\r"
