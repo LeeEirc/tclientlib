@@ -78,7 +78,8 @@ not negotiate password echo correctly.
 
 Local raw mode is used only for terminal input and is restored before returning
 from the CLI, including connection errors, remote disconnects, local quit, and
-handled termination signals. Terminal dimensions are sent when NAWS is
+handled termination signals. Original input and output file flags are preserved,
+including nonblocking streams. Terminal dimensions are sent when NAWS is
 negotiated; supported Unix systems also send changes after SIGWINCH. Dimensions
 are refreshed after automatic login, and resize writes run separately from the
 session loop so a slow peer cannot block local quit or disconnect handling.
@@ -122,6 +123,14 @@ tclient> quit
 the remote endpoint. These command names are processed locally and are never
 sent as terminal text. `send` calls the library's existing `SendCommand` API.
 It does not implement TCP urgent data or Telnet SYNCH.
+
+Interactive network writes use an ordered queue so local commands can still be
+read when the peer stops accepting input. The input backlog is limited to
+256 KiB, including any write in progress. If that limit is exceeded, the CLI
+reports an error and closes the session; pending input may not have reached the
+peer. Local `quit` also closes the connection without waiting for pending input
+to be delivered. Redirected input remains a stream with backpressure and has no
+limit on its total size.
 
 ## Tracing
 

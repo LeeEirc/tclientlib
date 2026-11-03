@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/LeeEirc/tclientlib"
-	"golang.org/x/term"
 	"golang.org/x/text/transform"
 )
 
@@ -31,11 +30,16 @@ func Run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "tclient:", err)
 		return 2
 	}
-	if o.askPass && !term.IsTerminal(int(stdin.Fd())) {
+	isTTY, err := fileIsTerminal(stdin)
+	if err != nil {
+		fmt.Fprintln(stderr, "tclient: inspect stdin:", err)
+		return 1
+	}
+	if o.askPass && !isTTY {
 		fmt.Fprintln(stderr, "tclient: --ask-pass requires a terminal on stdin")
 		return 2
 	}
-	if term.IsTerminal(int(stdin.Fd())) && !supportsTerminal() {
+	if isTTY && !supportsTerminal() {
 		fmt.Fprintln(stderr, "tclient: interactive terminals are currently supported on Unix; redirected input remains available")
 		return 2
 	}
@@ -83,8 +87,10 @@ func run(ctx context.Context, o options, stdin *os.File, stdout, stderr io.Write
 	}
 	stdout = &lockedWriter{mu: outputMu, writer: stdout}
 	stderr = &lockedWriter{mu: localMu, writer: stderr}
-	fd := int(stdin.Fd())
-	isTTY := term.IsTerminal(fd)
+	isTTY, err := fileIsTerminal(stdin)
+	if err != nil {
+		return fmt.Errorf("inspect stdin: %w", err)
+	}
 	password := ""
 	passwordCR := false
 	if o.askPass {
@@ -133,7 +139,7 @@ func run(ctx context.Context, o options, stdin *os.File, stdout, stderr io.Write
 		config.User, config.Password = o.user, password
 	}
 	if isTTY {
-		if width, height, err := term.GetSize(fd); err == nil {
+		if width, height, err := fileTerminalSize(stdin); err == nil {
 			config.Width, config.Height = width, height
 		}
 	}
@@ -152,12 +158,12 @@ func run(ctx context.Context, o options, stdin *os.File, stdout, stderr io.Write
 	defer client.Close()
 	var terminal *terminalInput
 	if isTTY {
-		state, err := term.MakeRaw(fd)
+		state, err := fileMakeRaw(stdin)
 		if err != nil {
 			return fmt.Errorf("enter terminal raw mode: %w", err)
 		}
 		defer func() {
-			if err := term.Restore(fd, state); retErr == nil {
+			if err := fileRestoreTerminal(stdin, state); retErr == nil {
 				retErr = err
 			}
 		}()
@@ -168,10 +174,32 @@ func run(ctx context.Context, o options, stdin *os.File, stdout, stderr io.Write
 
 func runSession(ctx context.Context, o options, stdin *os.File, output io.Writer, conn net.Conn, client *tclientlib.Client, terminal *terminalInput, flush func() error, cancelOutput context.CancelFunc) error {
 	sessionCtx, cancel := context.WithCancel(ctx)
+	finishInput := func() error {
+		if err := flush(); err != nil {
+			return fmt.Errorf("flush input: %w", err)
+		}
+		if o.closeWrite {
+			halfCloser, ok := conn.(interface{ CloseWrite() error })
+			if !ok {
+				return fmt.Errorf("connection does not support closing the input direction")
+			}
+			if err := halfCloser.CloseWrite(); err != nil {
+				return fmt.Errorf("close input direction: %w", err)
+			}
+		}
+		return nil
+	}
+	var sender *inputSender
+	var sendResult <-chan error
+	if terminal != nil {
+		sender = newInputSender(sessionCtx, client, finishInput)
+		terminal.client = sender
+		sendResult = sender.result
+	}
 	var sizes <-chan terminalSize
 	if terminal != nil {
 		var stop func()
-		sizes, stop = watchTerminalSize(sessionCtx, int(stdin.Fd()))
+		sizes, stop = watchTerminalSize(sessionCtx, stdin)
 		defer stop()
 	}
 	resizeErrors, resizeStopped := startResizeWorker(sessionCtx, sizes, client.WindowChange)
@@ -195,6 +223,9 @@ func runSession(ctx context.Context, o options, stdin *os.File, output io.Writer
 		// input or negotiation may currently be blocked writing to the peer.
 		_ = conn.Close()
 		stopInput(stdin)
+		if sender != nil {
+			<-sender.stopped
+		}
 		<-resizeStopped
 		<-inputStopped
 		<-outputStopped
@@ -229,21 +260,19 @@ func runSession(ctx context.Context, o options, stdin *os.File, output io.Writer
 			if err := conn.SetDeadline(deadline); err != nil {
 				return fmt.Errorf("set EOF drain deadline: %w", err)
 			}
-			if err := flush(); err != nil {
-				return fmt.Errorf("flush input: %w", err)
-			}
-			if o.closeWrite {
-				halfCloser, ok := conn.(interface{ CloseWrite() error })
-				if !ok {
-					return fmt.Errorf("connection does not support closing the input direction")
-				}
-				if err := halfCloser.CloseWrite(); err != nil {
-					return fmt.Errorf("close input direction: %w", err)
-				}
-			}
 			sent = nil
 			timer = time.NewTimer(time.Until(deadline))
 			drained = timer.C
+			if sender != nil {
+				sender.finishInput()
+			} else if err := finishInput(); err != nil {
+				return err
+			}
+		case err := <-sendResult:
+			if err != nil {
+				return fmt.Errorf("send input: %w", err)
+			}
+			sendResult = nil
 		case <-drained:
 			return fmt.Errorf("remote output did not finish within %s after stdin EOF", o.drainTimeout)
 		case err := <-resizeErrors:

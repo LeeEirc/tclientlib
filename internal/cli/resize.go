@@ -2,8 +2,7 @@ package cli
 
 import (
 	"context"
-
-	"golang.org/x/term"
+	"os"
 )
 
 type terminalSize struct {
@@ -14,13 +13,13 @@ type terminalSize struct {
 // watchTerminalSize subscribes before taking its first snapshot. Login may
 // have taken long enough for the size captured in ClientConfig to be stale;
 // refreshing here also closes the gap before the signal subscription began.
-func watchTerminalSize(ctx context.Context, fd int) (<-chan terminalSize, func()) {
+func watchTerminalSize(ctx context.Context, file *os.File) (<-chan terminalSize, func()) {
 	signals, stopSignals := watchResize()
 	watchCtx, cancel := context.WithCancel(ctx)
 	updates := make(chan terminalSize, 1)
 	stopped := make(chan struct{})
 	refresh := func() {
-		width, height, err := term.GetSize(fd)
+		width, height, err := fileTerminalSize(file)
 		if err == nil && width > 0 && height > 0 {
 			queueLatestSize(updates, terminalSize{height: height, width: width})
 		}

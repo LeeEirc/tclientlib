@@ -114,9 +114,12 @@ class Peer:
 
 
 class TTYClient:
-    def __init__(self, binary, port, extra=(), stdout=None):
+    def __init__(self, binary, port, extra=(), stdout=None, nonblocking=False):
         self.master, self.slave = pty.openpty()
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        if nonblocking:
+            flags = fcntl.fcntl(self.slave, fcntl.F_GETFL)
+            fcntl.fcntl(self.slave, fcntl.F_SETFL, flags | os.O_NONBLOCK)
         self.original = termios.tcgetattr(self.slave)
         self.original_flags = fcntl.fcntl(self.slave, fcntl.F_GETFL)
         self.output = bytearray()
@@ -193,11 +196,11 @@ def main():
     binary = os.path.abspath(args.binary)
     results = []
 
-    def failed_dial():
+    def failed_dial(nonblocking=False):
         reserve = socket.socket()
         reserve.bind(("127.0.0.1", 0))
         port = reserve.getsockname()[1]
-        child = TTYClient(binary, port, ["--timeout", "100ms"])
+        child = TTYClient(binary, port, ["--timeout", "100ms"], nonblocking=nonblocking)
         try:
             code = child.wait_exit()
             assert code != 0, "connection failure returned success"
@@ -220,9 +223,9 @@ def main():
             child.close()
             peer.close()
 
-    def escape_quit():
+    def escape_quit(nonblocking=False):
         peer = Peer()
-        child = TTYClient(binary, peer.port)
+        child = TTYClient(binary, peer.port, nonblocking=nonblocking)
         try:
             peer.send(b"READY\r\n")
             child.wait_output(b"READY")
@@ -552,8 +555,10 @@ def main():
 
     for name, fn in [
         ("connect_failure_restores_terminal", failed_dial),
+        ("connect_failure_preserves_nonblocking_terminal", lambda: failed_dial(True)),
         ("remote_eof_restores_terminal", remote_eof),
         ("escape_quit_is_local", escape_quit),
+        ("quit_preserves_nonblocking_terminal", lambda: escape_quit(True)),
         ("sigterm_restores_terminal", terminated),
         ("naws_initial_and_resize", naws_resize),
         ("resize_during_login_is_refreshed", login_resize_refresh),

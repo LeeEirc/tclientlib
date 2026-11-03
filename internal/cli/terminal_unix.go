@@ -27,30 +27,37 @@ func watchResize() (<-chan os.Signal, func()) {
 }
 
 func readInput(ctx context.Context, input *os.File, p []byte) (int, error) {
-	fd := int(input.Fd())
 	for {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-		_, err := unix.Poll(poll, 100)
-		if err == unix.EINTR {
-			continue
+		if len(p) == 0 {
+			return 0, nil
 		}
-		if err != nil {
-			return 0, err
-		}
-		if poll[0].Revents == 0 {
-			continue
-		}
-		if poll[0].Revents&unix.POLLNVAL != 0 {
-			return 0, os.ErrClosed
-		}
-		n, err := unix.Read(fd, p)
+		var n int
+		var ready bool
+		err := withFileDescriptor(input, func(fd uintptr) error {
+			poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+			if _, err := unix.Poll(poll, 100); err != nil {
+				return err
+			}
+			if poll[0].Revents == 0 {
+				return nil
+			}
+			if poll[0].Revents&unix.POLLNVAL != 0 {
+				return os.ErrClosed
+			}
+			ready = true
+			var readErr error
+			n, readErr = unix.Read(int(fd), p)
+			return readErr
+		})
 		if err == unix.EINTR || err == unix.EAGAIN {
 			continue
 		}
-		return n, err
+		if err != nil || ready {
+			return n, err
+		}
 	}
 }
 
@@ -58,7 +65,7 @@ func readInput(ctx context.Context, input *os.File, p []byte) (int, error) {
 func stopInput(*os.File) {}
 
 type descriptorFlags struct {
-	fd    uintptr
+	file  *os.File
 	flags int
 }
 
@@ -76,29 +83,41 @@ func terminalOutputs(ctx context.Context, stdout, stderr io.Writer) (io.Writer, 
 		if !ok {
 			continue
 		}
-		fd := file.Fd()
-		if !seen[fd] {
-			flags, err := unix.FcntlInt(fd, unix.F_GETFL, 0)
-			if err != nil {
-				return nil, nil, nil, err
+		if err := withFileDescriptor(file, func(fd uintptr) error {
+			if !seen[fd] {
+				flags, err := unix.FcntlInt(fd, unix.F_GETFL, 0)
+				if err != nil {
+					return err
+				}
+				saved = append(saved, descriptorFlags{file: file, flags: flags})
+				seen[fd] = true
 			}
-			saved = append(saved, descriptorFlags{fd: fd, flags: flags})
-			seen[fd] = true
+			return nil
+		}); err != nil {
+			return nil, nil, nil, err
 		}
-		writers[i] = &pollWriter{ctx: ctx, fd: int(fd)}
+		writers[i] = &pollWriter{ctx: ctx, file: file}
 	}
 	restore := func() error {
 		var first error
 		for i := len(saved) - 1; i >= 0; i-- {
 			entry := saved[i]
-			if _, err := unix.FcntlInt(entry.fd, unix.F_SETFL, entry.flags); err != nil && first == nil {
+			err := withFileDescriptor(entry.file, func(fd uintptr) error {
+				_, err := unix.FcntlInt(fd, unix.F_SETFL, entry.flags)
+				return err
+			})
+			if err != nil && first == nil {
 				first = err
 			}
 		}
 		return first
 	}
 	for _, entry := range saved {
-		if _, err := unix.FcntlInt(entry.fd, unix.F_SETFL, entry.flags|unix.O_NONBLOCK); err != nil {
+		err := withFileDescriptor(entry.file, func(fd uintptr) error {
+			_, err := unix.FcntlInt(fd, unix.F_SETFL, entry.flags|unix.O_NONBLOCK)
+			return err
+		})
+		if err != nil {
 			_ = restore()
 			return nil, nil, nil, err
 		}
@@ -107,8 +126,8 @@ func terminalOutputs(ctx context.Context, stdout, stderr io.Writer) (io.Writer, 
 }
 
 type pollWriter struct {
-	ctx context.Context
-	fd  int
+	ctx  context.Context
+	file *os.File
 }
 
 func (w *pollWriter) Write(p []byte) (int, error) {
@@ -117,7 +136,12 @@ func (w *pollWriter) Write(p []byte) (int, error) {
 		if err := w.ctx.Err(); err != nil {
 			return total, err
 		}
-		n, err := unix.Write(w.fd, p)
+		var n int
+		err := withFileDescriptor(w.file, func(fd uintptr) error {
+			var writeErr error
+			n, writeErr = unix.Write(int(fd), p)
+			return writeErr
+		})
 		if n > 0 {
 			total += n
 			p = p[n:]
@@ -134,7 +158,10 @@ func (w *pollWriter) Write(p []byte) (int, error) {
 			}
 			continue
 		}
-		_, err = unix.Poll([]unix.PollFd{{Fd: int32(w.fd), Events: unix.POLLOUT}}, 100)
+		err = withFileDescriptor(w.file, func(fd uintptr) error {
+			_, err := unix.Poll([]unix.PollFd{{Fd: int32(fd), Events: unix.POLLOUT}}, 100)
+			return err
+		})
 		if err != nil && err != unix.EINTR {
 			return total, err
 		}

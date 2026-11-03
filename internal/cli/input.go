@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/LeeEirc/tclientlib"
-	"golang.org/x/term"
 )
 
 const escapeKey = 0x1d // Ctrl+]
@@ -214,13 +213,12 @@ func writeFull(writer io.Writer, data []byte) error {
 }
 
 func readPassword(ctx context.Context, input *os.File, output io.Writer) (password string, afterCR bool, retErr error) {
-	fd := int(input.Fd())
-	state, err := term.MakeRaw(fd)
+	state, err := fileMakeRaw(input)
 	if err != nil {
 		return "", false, err
 	}
 	defer func() {
-		if err := term.Restore(fd, state); retErr == nil {
+		if err := fileRestoreTerminal(input, state); retErr == nil {
 			retErr = err
 		}
 		_, _ = io.WriteString(output, "\r\n")
