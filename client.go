@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 )
 
@@ -49,6 +50,8 @@ func NewClientConn(conn net.Conn, config *ClientConfig) (*Client, error) {
 
 func newClientConn(conn net.Conn, config clientConfig) (*Client, error) {
 	transport := newTransport(conn, config.transportConfig())
+	autoLogin := config.User != "" || config.Password != ""
+	transport.setTraceRedaction(autoLogin)
 	var reader io.Reader = transport
 	var writer io.Writer = transport
 	if config.WrapStream != nil {
@@ -62,21 +65,24 @@ func newClientConn(conn net.Conn, config clientConfig) (*Client, error) {
 	// Keep the same buffered reader for login and the interactive session. Login
 	// reads only through the matched prompt, so bytes that arrived in the same
 	// transport read after that prompt remain available to Client.Read.
-	bufferedReader := bufio.NewReaderSize(reader, 4096)
+	bufferedReader := bufio.NewReaderSize(reader, loginReadBufferSize)
 	client := &Client{
 		conn:      conn,
 		transport: transport,
 		reader:    bufferedReader,
 		writer:    writer,
 	}
-	if config.User != "" || config.Password != "" {
-		transport.setTraceRedaction(true)
-		err := login(conn, bufferedReader, writer, config, transport.trace)
-		transport.setTraceRedaction(false)
+	if autoLogin {
+		replay, err := login(conn, bufferedReader, writer, config, transport.trace)
 		if err != nil {
+			// Keep redaction enabled while a stream wrapper flushes on Close.
 			_ = client.Close()
 			return nil, fmt.Errorf("telnet: handshake failed: %w", err)
 		}
+		if replay != "" {
+			client.reader = io.MultiReader(strings.NewReader(replay), bufferedReader)
+		}
+		transport.setTraceRedaction(false)
 	}
 	return client, nil
 }
