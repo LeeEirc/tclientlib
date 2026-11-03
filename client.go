@@ -35,8 +35,9 @@ func Dial(network, addr string, config *ClientConfig) (*Client, error) {
 	return newClientConn(conn, fullConfig)
 }
 
-// NewClientConn creates an authenticated Telnet client over an existing
-// net.Conn. This is the counterpart of Dial for gateway and tunneled links.
+// NewClientConn creates a Telnet client over an existing net.Conn, performing
+// prompt-based login when User or Password is configured. This is the
+// counterpart of Dial for gateway and tunneled links.
 func NewClientConn(conn net.Conn, config *ClientConfig) (*Client, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("%w: connection is nil", ErrInvalidConfig)
@@ -87,12 +88,17 @@ func newClientConn(conn net.Conn, config clientConfig) (*Client, error) {
 	return client, nil
 }
 
+// Read receives terminal application data after Telnet decoding and optional
+// stream wrappers. In non-BINARY mode the transport removes a NUL immediately
+// following CR, while preserving CR LF and unrelated NUL bytes.
 func (c *Client) Read(p []byte) (int, error) {
 	return c.reader.Read(p)
 }
 
 // Write sends terminal application data. Telnet IAC bytes are escaped by the
-// transport after optional stream wrappers have encoded the data.
+// transport after optional stream wrappers have encoded the data. Line endings
+// are preserved; callers choose CR LF or CR NUL sequences for NVT mode, or a
+// device-specific terminator when required.
 func (c *Client) Write(p []byte) (int, error) {
 	return c.writer.Write(p)
 }

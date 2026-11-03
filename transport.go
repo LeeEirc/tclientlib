@@ -20,9 +20,11 @@ type transport struct {
 	readBuffer []byte
 	pending    []byte
 	pendingErr error
+	nvtCR      bool // Last received NVT application byte was CR; protected by readMu.
 
-	localOptions  [256]bool
-	remoteOptions [256]bool
+	localOptions           [256]bool
+	remoteOptions          [256]bool
+	oldEnvironmentReversed bool
 }
 
 func newTransport(conn net.Conn, config transportConfig) *transport {
@@ -67,14 +69,16 @@ func (t *transport) Read(p []byte) (int, error) {
 			raw := t.readBuffer[:n]
 			t.trace.bytes("wire", "recv", raw)
 			data, events, decodeErr := t.decoder.feed(raw)
-			t.trace.bytes("application", "recv", data)
-			t.pending = append(t.pending, data...)
+			offset := 0
 			for _, event := range events {
+				t.receiveData(data[offset:event.dataOffset])
+				offset = event.dataOffset
 				t.trace.event("recv", event)
 				if err := t.handleEvent(event); err != nil && t.pendingErr == nil {
 					t.pendingErr = err
 				}
 			}
+			t.receiveData(data[offset:])
 			if decodeErr != nil && t.pendingErr == nil {
 				t.trace.printf("decode error: %v", decodeErr)
 				t.pendingErr = decodeErr
@@ -88,6 +92,33 @@ func (t *transport) Read(p []byte) (int, error) {
 			continue
 		}
 	}
+}
+
+// receiveData maps the NVT stream before charset conversion. CR is delivered
+// immediately so a server's standalone CR cannot delay interactive output.
+// Only its following NUL is removed; CR LF and unrelated NULs are preserved.
+// Read calls this even for empty spans between events so a BINARY transition
+// cannot leave a CR pending from the previous mode.
+func (t *transport) receiveData(data []byte) {
+	t.stateMu.Lock()
+	binary := t.remoteOptions[binaryOption]
+	t.stateMu.Unlock()
+
+	start := len(t.pending)
+	if binary {
+		t.nvtCR = false
+		t.pending = append(t.pending, data...)
+	} else {
+		for _, value := range data {
+			if t.nvtCR && value == 0 {
+				t.nvtCR = false
+				continue
+			}
+			t.pending = append(t.pending, value)
+			t.nvtCR = value == '\r'
+		}
+	}
+	t.trace.bytes("application", "recv", t.pending[start:])
 }
 
 func (t *transport) Write(p []byte) (int, error) {
@@ -135,6 +166,10 @@ func (t *transport) windowChange(height, width int) error {
 		width = maxWindowSize
 	}
 
+	// Serialize the new size and its packet with option changes and other
+	// window updates; an old snapshot must not overtake a later DONT or size.
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
 	t.stateMu.Lock()
 	t.config.Height = height
 	t.config.Width = width
@@ -146,19 +181,67 @@ func (t *transport) windowChange(height, width int) error {
 	if !enabled {
 		return nil
 	}
-	return t.writePackets(packet)
+	return t.writePacketsLocked(packet)
 }
 
 func (t *transport) handleEvent(event telnetEvent) error {
+	if !t.eventNeedsWrite(event) {
+		return nil
+	}
+	// Keep option state changes and their replies ahead of concurrent writes.
+	// In particular, data chosen using SendBinary must not overtake WILL.
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
 	switch event.typ {
 	case negotiationEvent:
-		return t.writePackets(t.handleNegotiation(event.command, event.option)...)
+		return t.writePacketsLocked(t.handleNegotiation(event.command, event.option)...)
 	case subnegotiationEvent:
-		return t.writePackets(t.handleSubnegotiation(event.option, event.parameters)...)
-	case commandEvent:
-		return nil
+		return t.writePacketsLocked(t.handleSubnegotiation(event.option, event.parameters)...)
 	default:
 		return nil
+	}
+}
+
+// Read serializes incoming option changes. WindowChange only updates dimensions,
+// so this read-only check can skip no-op events without taking writeMu. Actual
+// changes and replies are still handled together under writeMu -> stateMu.
+// Otherwise a duplicate or ignored event could block reading behind a full
+// application send buffer, even though it has nothing to send to the peer.
+func (t *transport) eventNeedsWrite(event telnetEvent) bool {
+	if event.typ != negotiationEvent && event.typ != subnegotiationEvent {
+		return false
+	}
+	t.stateMu.Lock()
+	defer t.stateMu.Unlock()
+	if event.typ == negotiationEvent {
+		switch event.command {
+		case do:
+			return !t.supportsLocalOption(event.option) || !t.localOptions[event.option]
+		case dont:
+			return t.localOptions[event.option]
+		case will:
+			return !t.supportsRemoteOption(event.option) || !t.remoteOptions[event.option]
+		case wont:
+			return t.remoteOptions[event.option]
+		default:
+			return false
+		}
+	}
+	if len(event.parameters) == 0 || event.parameters[0] != 1 || !t.localOptions[event.option] {
+		return false
+	}
+	switch event.option {
+	case terminalType, terminalSpeed:
+		return true
+	case oldEnvironment, newEnvironment:
+		// Validate before waiting for the writer; malformed requests have no
+		// reply and must not block either. Do not change the OLD-ENVIRON dialect
+		// here: handleSubnegotiation commits it with the actual response.
+		params, _ := environmentResponse(event.parameters[1:], t.config.User,
+			event.option == oldEnvironment, t.oldEnvironmentReversed, t.config.maxSubnegotiation)
+		return params != nil
+	default:
+		return false
 	}
 }
 
@@ -228,13 +311,14 @@ func (t *transport) handleSubnegotiation(option byte, parameters []byte) []optio
 	case terminalSpeed:
 		return []optionPacket{{command: sb, option: option, parameters: []byte("\x0038400,38400")}}
 	case oldEnvironment, newEnvironment:
-		if t.config.User == "" {
+		params, reversed := environmentResponse(parameters[1:], t.config.User,
+			option == oldEnvironment, t.oldEnvironmentReversed, t.config.maxSubnegotiation)
+		if params == nil {
 			return nil
 		}
-		params := []byte{0, 0}
-		params = append(params, []byte("USER")...)
-		params = append(params, 1)
-		params = append(params, []byte(t.config.User)...)
+		if option == oldEnvironment {
+			t.oldEnvironmentReversed = reversed
+		}
 		return []optionPacket{{command: sb, option: option, parameters: params}}
 	default:
 		return nil
@@ -243,7 +327,7 @@ func (t *transport) handleSubnegotiation(option byte, parameters []byte) []optio
 
 func (t *transport) supportsLocalOption(option byte) bool {
 	switch option {
-	case binaryOption, terminalType, windowSize, terminalSpeed:
+	case binaryOption, suppressGAOption, terminalType, windowSize, terminalSpeed:
 		return true
 	case oldEnvironment, newEnvironment:
 		return t.config.User != ""
@@ -268,7 +352,7 @@ func (t *transport) windowPacketLocked() optionPacket {
 	return optionPacket{command: sb, option: windowSize, parameters: params}
 }
 
-func (t *transport) writePackets(packets ...optionPacket) error {
+func (t *transport) writePacketsLocked(packets ...optionPacket) error {
 	if len(packets) == 0 {
 		return nil
 	}
@@ -277,7 +361,8 @@ func (t *transport) writePackets(packets ...optionPacket) error {
 		t.trace.packet("send", packet)
 		data = append(data, packet.bytes()...)
 	}
-	return t.writeAll(data)
+	_, err := t.writeRawLocked(data)
+	return err
 }
 
 func (t *transport) writeAll(data []byte) error {
@@ -288,7 +373,10 @@ func (t *transport) writeAll(data []byte) error {
 func (t *transport) writeRaw(data []byte) (int, error) {
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
+	return t.writeRawLocked(data)
+}
 
+func (t *transport) writeRawLocked(data []byte) (int, error) {
 	total := 0
 	for len(data) > 0 {
 		n, err := t.conn.Write(data)
