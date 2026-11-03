@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
 )
 
 type transport struct {
@@ -22,7 +21,6 @@ type transport struct {
 	pending    []byte
 	pendingErr error
 
-	traceRedacted atomic.Bool
 	localOptions  [256]bool
 	remoteOptions [256]bool
 }
@@ -38,7 +36,7 @@ func newTransport(conn net.Conn, config transportConfig) *transport {
 }
 
 func (t *transport) setTraceRedaction(enabled bool) {
-	t.traceRedacted.Store(enabled)
+	t.trace.setRedaction(enabled)
 }
 
 func (t *transport) Read(p []byte) (int, error) {
@@ -67,17 +65,9 @@ func (t *transport) Read(p []byte) (int, error) {
 		n, readErr := t.conn.Read(t.readBuffer)
 		if n > 0 {
 			raw := t.readBuffer[:n]
-			if t.traceRedacted.Load() {
-				t.trace.redacted("wire", "recv", len(raw))
-			} else {
-				t.trace.bytes("wire", "recv", raw)
-			}
+			t.trace.bytes("wire", "recv", raw)
 			data, events, decodeErr := t.decoder.feed(raw)
-			if t.traceRedacted.Load() {
-				t.trace.redacted("application", "recv", len(data))
-			} else {
-				t.trace.bytes("application", "recv", data)
-			}
+			t.trace.bytes("application", "recv", data)
 			t.pending = append(t.pending, data...)
 			for _, event := range events {
 				t.trace.event("recv", event)
@@ -101,11 +91,7 @@ func (t *transport) Read(p []byte) (int, error) {
 }
 
 func (t *transport) Write(p []byte) (int, error) {
-	if t.traceRedacted.Load() {
-		t.trace.redacted("application", "send", len(p))
-	} else {
-		t.trace.bytes("application", "send", p)
-	}
+	t.trace.bytes("application", "send", p)
 	encoded := appendEscapedIAC(make([]byte, 0, len(p)), p)
 	written, err := t.writeRaw(encoded)
 	if err != nil {
@@ -307,11 +293,7 @@ func (t *transport) writeRaw(data []byte) (int, error) {
 	for len(data) > 0 {
 		n, err := t.conn.Write(data)
 		if n > 0 {
-			if t.traceRedacted.Load() {
-				t.trace.redacted("wire", "send", n)
-			} else {
-				t.trace.bytes("wire", "send", data[:n])
-			}
+			t.trace.bytes("wire", "send", data[:n])
 		}
 		total += n
 		data = data[n:]
