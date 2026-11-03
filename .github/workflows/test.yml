@@ -26,6 +26,9 @@ jobs:
           go-version: ${{ matrix.go-version }}
       - run: go test -race -timeout=3m ./...
       - run: go vet ./...
+      - name: Verify release version selection
+        if: runner.os == 'Linux'
+        run: python3 -m unittest discover -s scripts -p 'test_release_target.py'
       - name: Verify interactive CLI with a real PTY and local TCP server
         if: runner.os == 'Linux'
         run: |

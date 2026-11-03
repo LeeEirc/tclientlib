@@ -18,6 +18,9 @@ the library redesign since `v0.0.2`, with the incompatible changes below.
 - Archives for Linux, macOS, and Windows on amd64 and arm64, with SHA-256
   checksums and GitHub build attestations. Unix supports interactive terminals;
   Windows currently supports redirected sessions only.
+- Version PRs that publish after a `VERSION` change is merged into `master`
+  and release checks pass. Manual workflow runs and version-tag pushes remain
+  available as alternative release entry points.
 - A stateful login matcher with bounded buffering, complete-line prompt
   matching, password-change detection, and preservation of data received after
   the shell prompt. Partial failure messages and banner text no longer count

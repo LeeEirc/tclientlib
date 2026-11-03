@@ -298,11 +298,15 @@ actual network packet layout, retransmission, or timing is relevant.
 
 ## Releases
 
-The Go library and `cmd/tclient` share one semantic-version tag. The release
-workflow runs the test matrix, builds all six platform archives, uploads a draft,
-and publishes it only after build attestations succeed. Maintainers can start a
-release from GitHub Actions or push a version tag; see the
-[release guide](docs/releasing.md).
+The Go library and `cmd/tclient` share one semantic-version tag. To release,
+open a PR that updates `VERSION` and [CHANGELOG.md](CHANGELOG.md).
+Merging the version change into `master` starts the release workflow for that
+commit. The workflow runs the test matrix, builds all six platform archives,
+uploads a draft, and publishes it only after build attestations succeed.
+
+PR checks and ordinary commits that leave `VERSION` unchanged do not publish a
+release. Manual GitHub Actions runs and pushed version tags are also supported;
+see the [release guide](docs/releasing.md).
 
 ## Scope and privilege switching
 
