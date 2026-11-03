@@ -6,11 +6,12 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 )
 
 type transport struct {
 	conn    net.Conn
-	config  clientConfig
+	config  transportConfig
 	decoder *decoder
 	trace   *tracer
 
@@ -21,11 +22,12 @@ type transport struct {
 	pending    []byte
 	pendingErr error
 
+	traceRedacted atomic.Bool
 	localOptions  [256]bool
 	remoteOptions [256]bool
 }
 
-func newTransport(conn net.Conn, config clientConfig) *transport {
+func newTransport(conn net.Conn, config transportConfig) *transport {
 	return &transport{
 		conn:       conn,
 		config:     config,
@@ -33,6 +35,10 @@ func newTransport(conn net.Conn, config clientConfig) *transport {
 		trace:      newTracer(config.Trace),
 		readBuffer: make([]byte, 4096),
 	}
+}
+
+func (t *transport) setTraceRedaction(enabled bool) {
+	t.traceRedacted.Store(enabled)
 }
 
 func (t *transport) Read(p []byte) (int, error) {
@@ -61,9 +67,17 @@ func (t *transport) Read(p []byte) (int, error) {
 		n, readErr := t.conn.Read(t.readBuffer)
 		if n > 0 {
 			raw := t.readBuffer[:n]
-			t.trace.bytes("wire", "recv", raw)
+			if t.traceRedacted.Load() {
+				t.trace.redacted("wire", "recv", len(raw))
+			} else {
+				t.trace.bytes("wire", "recv", raw)
+			}
 			data, events, decodeErr := t.decoder.feed(raw)
-			t.trace.bytes("application", "recv", data)
+			if t.traceRedacted.Load() {
+				t.trace.redacted("application", "recv", len(data))
+			} else {
+				t.trace.bytes("application", "recv", data)
+			}
 			t.pending = append(t.pending, data...)
 			for _, event := range events {
 				t.trace.event("recv", event)
@@ -87,7 +101,11 @@ func (t *transport) Read(p []byte) (int, error) {
 }
 
 func (t *transport) Write(p []byte) (int, error) {
-	t.trace.bytes("application", "send", p)
+	if t.traceRedacted.Load() {
+		t.trace.redacted("application", "send", len(p))
+	} else {
+		t.trace.bytes("application", "send", p)
+	}
 	encoded := appendEscapedIAC(make([]byte, 0, len(p)), p)
 	written, err := t.writeRaw(encoded)
 	if err != nil {
@@ -207,7 +225,7 @@ func (t *transport) handleNegotiation(command, option byte) []optionPacket {
 }
 
 func (t *transport) handleSubnegotiation(option byte, parameters []byte) []optionPacket {
-	if len(parameters) == 0 || parameters[0] != 1 { // SEND
+	if len(parameters) == 0 || parameters[0] != 1 {
 		return nil
 	}
 
@@ -219,7 +237,7 @@ func (t *transport) handleSubnegotiation(option byte, parameters []byte) []optio
 
 	switch option {
 	case terminalType:
-		params := append([]byte{0}, []byte(t.config.TerminalType)...) // IS
+		params := append([]byte{0}, []byte(t.config.TerminalType)...)
 		return []optionPacket{{command: sb, option: option, parameters: params}}
 	case terminalSpeed:
 		return []optionPacket{{command: sb, option: option, parameters: []byte("\x0038400,38400")}}
@@ -227,9 +245,9 @@ func (t *transport) handleSubnegotiation(option byte, parameters []byte) []optio
 		if t.config.User == "" {
 			return nil
 		}
-		params := []byte{0, 0} // IS, VAR
+		params := []byte{0, 0}
 		params = append(params, []byte("USER")...)
-		params = append(params, 1) // VALUE
+		params = append(params, 1)
 		params = append(params, []byte(t.config.User)...)
 		return []optionPacket{{command: sb, option: option, parameters: params}}
 	default:
@@ -289,7 +307,11 @@ func (t *transport) writeRaw(data []byte) (int, error) {
 	for len(data) > 0 {
 		n, err := t.conn.Write(data)
 		if n > 0 {
-			t.trace.bytes("wire", "send", data[:n])
+			if t.traceRedacted.Load() {
+				t.trace.redacted("wire", "send", n)
+			} else {
+				t.trace.bytes("wire", "send", data[:n])
+			}
 		}
 		total += n
 		data = data[n:]

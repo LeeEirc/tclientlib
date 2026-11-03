@@ -37,6 +37,13 @@ func (t *tracer) bytes(scope, direction string, data []byte) {
 	t.printf("%s %s len=%d data=% x%s", scope, direction, len(data), sample, suffix)
 }
 
+func (t *tracer) redacted(scope, direction string, length int) {
+	if t == nil || length == 0 {
+		return
+	}
+	t.printf("%s %s len=%d data=<redacted>", scope, direction, length)
+}
+
 func (t *tracer) event(direction string, event telnetEvent) {
 	if t == nil {
 		return

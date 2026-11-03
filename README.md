@@ -16,11 +16,14 @@ type ClientConfig struct {
     TerminalType string
     Width        int
     Height       int
+    LineEnding   LineEnding
 
-    UsernamePrompt *regexp.Regexp
-    PasswordPrompt *regexp.Regexp
-    SuccessPrompt  *regexp.Regexp
-    FailurePrompt  *regexp.Regexp
+    UsernamePrompt       *regexp.Regexp
+    PasswordPrompt       *regexp.Regexp
+    ShellPrompt          *regexp.Regexp
+    FailurePrompt        *regexp.Regexp
+    PasswordChangePrompt *regexp.Regexp
+    ContinuePrompt       *regexp.Regexp
 
     WrapStream func(io.Reader, io.Writer) (io.Reader, io.Writer)
     Trace      io.Writer
@@ -83,6 +86,97 @@ Send a Telnet break without constructing raw protocol bytes:
 err := client.SendCommand(tclientlib.CommandBreak)
 ```
 
+## Login matching
+
+Telnet does not define an authentication protocol. The client therefore treats
+login as a small expect-style state machine instead of searching an entire
+banner for broad success or failure words.
+
+The state machine keeps authentication decisions strict while allowing common
+prompt wording:
+
+- username prompts include forms such as `Login:`, `Enter username:`,
+  `Please enter your username:`, and `Login as:`;
+- password prompts include `Password:`, `Password for admin:`,
+  `Please input your password:`, and `Password (required):`;
+- default shell detection supports common Unix and network-device forms such as
+  `router#`, `my device #`, `host%`, `switch(config)#`, `<HUAWEI>`,
+  `[HUAWEI]`, and `[user@host ~]$`;
+- explicit failures may include a bounded suffix such as `please try again` or
+  `please retry`, while login-history counters remain ordinary banners;
+- prompts such as `Press RETURN to get started!` and `Press ENTER to continue`
+  receive an Enter key and then continue waiting for the real shell prompt.
+
+Automatic continuation is limited to three responses per connection, preventing
+a malformed or hostile endpoint from causing an infinite response loop.
+
+Before matching, login output is normalized into logical terminal lines:
+
+- Telnet framing has already been removed;
+- an optional charset wrapper has already decoded the bytes;
+- NUL and BEL are ignored;
+- backspace and carriage-return overwrite behavior is applied;
+- common ANSI CSI and OSC sequences are removed.
+
+Username, password, shell, failure, password-change, and continuation
+expressions are matched against one normalized line. A custom expression
+replaces the built-in expression for that event and must match the complete
+line. `ShellPrompt` represents the final interactive prompt, not a success
+message in a banner. Text such as `Last login`, `Login successful`, or `成功`
+is not considered proof of authentication.
+
+For example:
+
+```go
+config.ShellPrompt = regexp.MustCompile(`(?:<[^>]+>|router(?:\([^)]*\))?[#>])`)
+config.FailurePrompt = regexp.MustCompile(`(?:Login incorrect|Access denied)`)
+config.ContinuePrompt = regexp.MustCompile(`Press Enter to open the console`)
+```
+
+Built-in username and password prompts deliberately require prompt punctuation.
+An unusual device that emits a bare prompt without `:` or `：` should provide a
+platform-specific expression rather than making the global fallback ambiguous.
+
+Login and the interactive session share one buffered reader. The login state
+machine stops as soon as the final shell prompt is recognized. Bytes already
+received after that prompt remain buffered for the next `Client.Read`; they are
+not discarded and the matched prompt itself is not replayed.
+
+### Automatic line endings
+
+Automatic usernames, passwords, and continue responses use `CR LF` by default.
+This does not rewrite data passed to `Client.Write`. Devices with non-standard
+input behavior can select another terminator:
+
+```go
+config.LineEnding = tclientlib.LineEndingCRNUL // CR NUL
+config.LineEnding = tclientlib.LineEndingCR    // bare CR
+config.LineEnding = tclientlib.LineEndingLF    // bare LF
+```
+
+Supported values are:
+
+- `LineEndingCRLF` — default Telnet NVT newline;
+- `LineEndingCRNUL` — carriage return without a line feed;
+- `LineEndingCR` — bare carriage return;
+- `LineEndingLF` — bare line feed.
+
+When the remote side requires a password change, constructors return an error
+that matches `ErrPasswordChangeRequired`:
+
+```go
+client, err := tclientlib.Dial("tcp", address, config)
+if errors.Is(err, tclientlib.ErrPasswordChangeRequired) {
+    // Handle password rotation in the calling application's credential workflow.
+}
+```
+
+The built-in password-change matcher recognizes direct requirements such as
+`Your password has expired`, `Current UNIX password:`, `New password:`, and
+`Retype new password:`. Informational text such as `Your password will expire in
+7 days` or `Password expired policy: disabled` remains a banner. The library
+deliberately does not choose or submit a new password.
+
 ## Charset conversion
 
 The same wrapped stream is used for both initial login and the interactive
@@ -118,10 +212,12 @@ The trace includes:
 - login state transitions and terminal resize events.
 
 Tracing is disabled when `Trace` is nil. Each byte dump is bounded, so a large
-terminal read does not produce an unbounded log line.
+terminal read does not produce an unbounded log line. Both received and sent byte
+dumps are replaced by `<redacted>` while the initial login state machine is
+active; semantic negotiation and login-state events remain visible.
 
-**Warning:** traces can contain usernames, passwords, commands, and terminal
-output. Store them securely and remove them after troubleshooting.
+**Warning:** post-login commands and terminal output may still contain sensitive
+information. Store traces securely and remove them after troubleshooting.
 
 The example client can write a trace directly:
 
