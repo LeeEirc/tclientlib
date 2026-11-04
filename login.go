@@ -29,6 +29,16 @@ var (
 	defaultPasswordPrompt = regexp.MustCompile(
 		`(?i)^\s*(?:(?:(?:please\s+)?(?:enter|input)\s+(?:your\s+)?(?:password|passwd|passcode)(?:\s+for\s+[^:：\r\n]+)?)|(?:password|passwd|passcode)(?:\s+for\s+[^:：\r\n]+)?|(?:login|user)\s+password|口令|(?:[^:：\r\n]*的\s*)?密\s*码|(?:请\s*)?(?:输入|键入)(?:登录\s*)?(?:密\s*码|口令))\s*(?:\([^()\r\n]{1,64}\))?\s*[:：]\s*$`,
 	)
+	// A bare word is authoritative only on a completed logical line. At a
+	// read boundary, "User" can still become "Username:" and "Password" can
+	// still become a policy banner. Explicit custom expressions may recognize
+	// devices whose bare prompts deliberately omit a line ending.
+	defaultBareUsernamePrompt = regexp.MustCompile(
+		`(?i)^(?:login|user(?:\s*name)?|name|用户名|账\s*号)$`,
+	)
+	defaultBarePasswordPrompt = regexp.MustCompile(
+		`(?i)^(?:password|passwd|passcode|口令|密\s*码)$`,
+	)
 	defaultAngleShellPrompt = regexp.MustCompile(
 		`^<[\pL\pN_.:@/\\~()\-]{1,126}>$`,
 	)
@@ -123,8 +133,8 @@ type loginPatterns struct {
 
 func patternsFor(config clientConfig) loginPatterns {
 	return loginPatterns{
-		username:       selectPattern(config.UsernamePrompt, defaultUsernamePrompt),
-		password:       selectPattern(config.PasswordPrompt, defaultPasswordPrompt),
+		username:       config.UsernamePrompt,
+		password:       config.PasswordPrompt,
 		shell:          config.ShellPrompt,
 		failure:        selectPattern(config.FailurePrompt, defaultFailurePrompt),
 		passwordChange: selectPattern(config.PasswordChangePrompt, defaultPasswordChangePrompt),
@@ -199,7 +209,7 @@ func (m *loginMachine) handleLine(writer io.Writer, line []byte, trace *tracer) 
 	if !utf8.Valid(line) {
 		return loginPending, nil
 	}
-	return m.handlePrompt(writer, line, trace)
+	return m.handlePrompt(writer, line, true, trace)
 }
 
 // Interactive prompts normally have no newline. Check them only at the end of
@@ -229,12 +239,13 @@ func (m *loginMachine) handlePartialLine(writer io.Writer, line []byte, trace *t
 	if matchPrompt(m.patterns.failure, line) {
 		return loginPending, nil
 	}
-	return m.handlePrompt(writer, line, trace)
+	return m.handlePrompt(writer, line, false, trace)
 }
 
 // handlePrompt runs only after the caller has validated the appropriate line
 // limit and given diagnostic messages precedence over interactive actions.
-func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer) (loginResult, error) {
+// complete permits the bounded bare-word defaults only after CRLF or LF.
+func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, complete bool, trace *tracer) (loginResult, error) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return loginPending, nil
@@ -252,7 +263,9 @@ func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer
 		return loginContinueSent, nil
 	}
 
-	if matchPrompt(m.patterns.username, line) {
+	if matchPrompt(m.patterns.username, line) ||
+		matchPrompt(defaultUsernamePrompt, line) ||
+		(complete && matchPrompt(defaultBareUsernamePrompt, line)) {
 		if m.phase != loginAwaitPrompt || m.config.User == "" {
 			trace.printf("login username prompt repeated or credential unavailable phase=%s", m.phase)
 			return loginFailed, nil
@@ -265,7 +278,9 @@ func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer
 		return loginCredentialSent, nil
 	}
 
-	if matchPrompt(m.patterns.password, line) {
+	if matchPrompt(m.patterns.password, line) ||
+		matchPrompt(defaultPasswordPrompt, line) ||
+		(complete && matchPrompt(defaultBarePasswordPrompt, line)) {
 		if m.phase == loginAwaitResult || m.config.Password == "" {
 			trace.printf("login password prompt repeated or credential unavailable phase=%s", m.phase)
 			return loginFailed, nil
@@ -287,10 +302,7 @@ func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer
 }
 
 func (m *loginMachine) shellPromptMatches(line []byte) bool {
-	if m.patterns.shell != nil {
-		return matchPrompt(m.patterns.shell, line)
-	}
-	return defaultShellPromptMatches(line)
+	return matchPrompt(m.patterns.shell, line) || defaultShellPromptMatches(line)
 }
 
 func defaultShellPromptMatches(line []byte) bool {

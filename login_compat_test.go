@@ -17,6 +17,13 @@ func TestCompatibleCredentialPromptVariants(t *testing.T) {
 		"Login as:",
 		"User Name:",
 		"请输入用户名：",
+		"Login",
+		"User",
+		"Username",
+		"User name",
+		"Name",
+		"用户名",
+		"账 号",
 	}
 	for _, prompt := range usernamePrompts {
 		t.Run("username-"+prompt, func(t *testing.T) {
@@ -45,6 +52,11 @@ func TestCompatibleCredentialPromptVariants(t *testing.T) {
 		"Password (required):",
 		"Login password:",
 		"请输入密码：",
+		"Password",
+		"Passwd",
+		"Passcode",
+		"密 码",
+		"口令",
 	}
 	for _, prompt := range passwordPrompts {
 		t.Run("password-"+prompt, func(t *testing.T) {
@@ -71,7 +83,7 @@ func TestCompatibleCredentialPromptVariants(t *testing.T) {
 		t.Fatal(err)
 	}
 	machine := newLoginMachine(config)
-	for _, banner := range []string{"Last login:", "Invalid user:", "Password"} {
+	for _, banner := range []string{"Last login:", "Invalid user:", "Password policy: enabled", "User name policy: enabled"} {
 		result, err := machine.handleLine(io.Discard, []byte(banner), nil)
 		if err != nil {
 			t.Fatal(err)

@@ -4,6 +4,45 @@ The Go library and `tclient` command share the same version. Entries describe
 user-visible changes; the GitHub Release also lists the commits since the
 previous tag.
 
+## v0.1.2
+
+### Changed
+
+- Custom `UsernamePrompt`, `PasswordPrompt`, and `ShellPrompt` now supplement
+  their built-in matchers. Either can recognize a prompt, so a shared platform
+  configuration can add device-specific alternatives while retaining standard
+  login prompts. Callers no longer need to combine built-in and custom rules.
+  The built-in shell branch retains its shape, length, and banner checks.
+- Built-in credential matching also recognizes short prompts without a colon
+  on completed CRLF/LF lines: `Login`, `User`, `Username`, `User Name`, `Name`,
+  `用户名`, `账号`, `Password`, `Passwd`, `Passcode`, `密码`, and `口令`. These are
+  bounded, case-insensitive whole-line matches. Unfinished built-in prompts
+  and longer forms such as `Password for admin:` still require prompt
+  punctuation, so a fragmented `Username:` or password-policy banner is not
+  mistaken for a bare credential prompt. Devices that wait at a bare prompt
+  without a newline can use an explicit custom expression. No timer or delay
+  is added. Login continues to match the current normalized logical line
+  rather than the full received transcript.
+- Custom expressions keep ordinary `regexp.Match` semantics, including
+  substring matching, explicit anchors, and case flags. No matching-mode
+  parameter is added. `FailurePrompt`, `PasswordChangePrompt`, and
+  `ContinuePrompt` still replace their respective built-in expressions, with
+  the existing diagnostic completion and precedence rules unchanged.
+
+### Upgrade notes
+
+- Unlike v0.1.0 and v0.1.1, setting a username, password, or shell expression
+  no longer disables that event's built-in matcher. Anchors limit only the
+  custom branch: `ShellPrompt: ^READY>$` also accepts built-in prompts such as
+  `router#`. Review configurations that used custom expressions to narrow
+  default recognition.
+- The library does not restore broad built-in success keywords such as
+  `Last login`, `success`, or `成功`. Adapters such as Koko should still migrate
+  exact known legacy default values to the current defaults and retain their
+  application-side validation of expressions that match the empty string.
+  Genuine custom expressions can be passed directly without a `.*` wrapper or
+  a copy of the built-in rules.
+
 ## v0.1.1
 
 ### Changed

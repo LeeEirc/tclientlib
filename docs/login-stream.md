@@ -35,12 +35,23 @@ An unfinished password-change input must end in `:` or `：` before being
 classified. `New password:` is rejected without submitting the managed old
 password. Custom `PasswordChangePrompt` and `FailurePrompt` still replace their
 respective defaults; their narrative matches obey the same completion rules.
+
+Custom `UsernamePrompt`, `PasswordPrompt`, and `ShellPrompt` supplement their
+built-in matchers: either the built-in rule or the custom expression may accept
+the current prompt. This keeps common prompts working when a platform also
+configures device-specific alternatives. `ContinuePrompt`, like the two
+diagnostic fields, still replaces its default.
+
 All custom prompt expressions use normal `regexp.Match` semantics on the
 current normalized line, with surrounding whitespace trimmed. An unanchored
 expression may match a substring; use `^` and `$` when a whole-line match is
 required. Expressions never search across logical lines. Built-in expressions
-retain their own anchors, and the default shell-shape and banner checks remain
-in effect when no custom shell expression is configured.
+retain their own anchors. Custom anchors and case flags apply only to that
+expression, not to the built-in alternative: `ShellPrompt: ^READY>$` still
+accepts a built-in `router#` prompt. The three supplemental fields do not
+disable built-in recognition. The built-in shell branch always retains its
+shape, length, and banner checks, including when a custom shell expression is
+configured.
 
 An incomplete line that matches a failure or password-change narrative is
 **pending**, not eligible for another prompt interpretation. For example,
@@ -54,6 +65,24 @@ The 512-byte limit is only the budget for unfinished prompts. A completed
 CRLF/LF line may use the logical-line budget (64 KiB), so longer custom prompts
 remain supported without increasing repeated partial-line scanning. Default
 shell prompts still have their separate 128-byte limit.
+
+On a completed CRLF/LF line, built-in credential matching also accepts a bounded
+set of short prompts with no colon. Username forms are `Login`, `User`,
+`Username`, `User Name`, `Name`, `用户名`, and `账号`; password forms are
+`Password`, `Passwd`, `Passcode`, `密码`, and `口令`. These rules are
+case-insensitive, allow spacing in `User Name`, `账 号`, and `密 码`, and require
+the whole completed normalized line to match. Longer forms such as
+`Password for admin:` still require `:` or `：`.
+
+An unfinished built-in credential prompt still requires its colon. A read
+ending at `User` can be followed by `name:`, and one ending at `Password` can
+be followed by ` expired policy: disabled`; neither read boundary establishes
+a bare prompt. No extra timer or delay is used to guess when these words are
+complete. A device that waits at a bare prompt without a newline can use an
+explicit custom expression, such as `(?i)^Password$`, which remains eligible
+for partial-line matching. This is a device-specific choice that retains the
+prefix ambiguity of an unfinished textual prompt. The new defaults do not
+restore arbitrary banner substring matching or the old broad success words.
 
 Default shell detection recognizes a structured bracketed Unix prompt such as
 `[admin@login ~]$` or `[admin@router /var/log/error]#` before applying the banner
@@ -80,9 +109,10 @@ not reconstructed. The interactive stream itself is not sanitized.
 
 A delimiter-less textual prompt can always be the prefix of a longer message.
 No TCP buffer size or fixed delay can remove that ambiguity. The defaults use
-bounded prompt shapes and known-banner filtering; unusual assets should use
-precise platform-specific prompt expressions. This is not a protocol-level
-proof of authentication.
+bounded prompt shapes and known-banner filtering. Custom username, password,
+and shell expressions should describe additional device-specific prompts
+precisely; they do not disable the built-in alternatives. This is not a
+protocol-level proof of authentication.
 
 ## Diagnostics and malformed subnegotiations
 

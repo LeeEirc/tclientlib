@@ -32,16 +32,23 @@ type ClientConfig struct {
 	// not rewritten and remains an application-data writer.
 	LineEnding LineEnding
 
-	// Prompt expressions replace the built-in expression for that event. They
-	// use regexp.Match semantics on the current normalized logical line with
-	// surrounding whitespace trimmed. Unanchored expressions may match a
-	// substring; use ^ and $ to require a full-line match.
+	// UsernamePrompt, PasswordPrompt, and ShellPrompt supplement the built-in
+	// rules: either the custom expression or the corresponding built-in
+	// matcher may recognize a prompt. They use regexp.Match semantics on the
+	// current normalized logical line with surrounding whitespace trimmed.
+	// Unanchored expressions may match a substring; ^ and $ constrain only
+	// the custom expression and do not disable the built-in matcher.
 	// ShellPrompt describes the final interactive prompt, not a success
-	// message in a login banner. ContinuePrompt describes an intermediate prompt
-	// that should receive an Enter key before login continues.
-	UsernamePrompt       *regexp.Regexp
-	PasswordPrompt       *regexp.Regexp
-	ShellPrompt          *regexp.Regexp
+	// message in a login banner.
+	UsernamePrompt *regexp.Regexp
+	PasswordPrompt *regexp.Regexp
+	ShellPrompt    *regexp.Regexp
+
+	// FailurePrompt, PasswordChangePrompt, and ContinuePrompt replace the
+	// corresponding built-in expression when non-nil. They use the same
+	// regexp.Match semantics and current logical-line scope as the prompts
+	// above. ContinuePrompt describes an intermediate prompt that should
+	// receive an Enter key before login continues.
 	FailurePrompt        *regexp.Regexp
 	PasswordChangePrompt *regexp.Regexp
 	ContinuePrompt       *regexp.Regexp
