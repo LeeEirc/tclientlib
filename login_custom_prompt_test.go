@@ -13,17 +13,18 @@ func TestCustomPromptsUseRegexpMatchSemantics(t *testing.T) {
 		name          string
 		set           func(*ClientConfig, *regexp.Regexp)
 		defaultPrompt string
+		additive      bool
 		result        loginResult
 		writes        string
 		phase         loginPhase
 		continues     int
 	}{
-		{"username", func(c *ClientConfig, p *regexp.Regexp) { c.UsernamePrompt = p }, "Login:", loginPending, "admin\r\n", loginAwaitPasswordOrResult, 0},
-		{"password", func(c *ClientConfig, p *regexp.Regexp) { c.PasswordPrompt = p }, "Password:", loginPending, "secret\r\n", loginAwaitResult, 0},
-		{"shell", func(c *ClientConfig, p *regexp.Regexp) { c.ShellPrompt = p }, "router#", loginSuccess, "", loginAwaitPrompt, 0},
-		{"failure", func(c *ClientConfig, p *regexp.Regexp) { c.FailurePrompt = p }, "Access denied", loginFailed, "", loginAwaitPrompt, 0},
-		{"password-change", func(c *ClientConfig, p *regexp.Regexp) { c.PasswordChangePrompt = p }, "New password:", loginPasswordChangeRequired, "", loginAwaitPrompt, 0},
-		{"continue", func(c *ClientConfig, p *regexp.Regexp) { c.ContinuePrompt = p }, "Press Enter to continue", loginPending, "\r\n", loginAwaitPrompt, 1},
+		{"username", func(c *ClientConfig, p *regexp.Regexp) { c.UsernamePrompt = p }, "Login:", true, loginPending, "admin\r\n", loginAwaitPasswordOrResult, 0},
+		{"password", func(c *ClientConfig, p *regexp.Regexp) { c.PasswordPrompt = p }, "Password:", true, loginPending, "secret\r\n", loginAwaitResult, 0},
+		{"shell", func(c *ClientConfig, p *regexp.Regexp) { c.ShellPrompt = p }, "router#", true, loginSuccess, "", loginAwaitPrompt, 0},
+		{"failure", func(c *ClientConfig, p *regexp.Regexp) { c.FailurePrompt = p }, "Access denied", false, loginFailed, "", loginAwaitPrompt, 0},
+		{"password-change", func(c *ClientConfig, p *regexp.Regexp) { c.PasswordChangePrompt = p }, "New password:", false, loginPasswordChangeRequired, "", loginAwaitPrompt, 0},
+		{"continue", func(c *ClientConfig, p *regexp.Regexp) { c.ContinuePrompt = p }, "Press Enter to continue", false, loginPending, "\r\n", loginAwaitPrompt, 1},
 	} {
 		t.Run(kind.name, func(t *testing.T) {
 			for _, tc := range []struct {
@@ -42,7 +43,7 @@ func TestCustomPromptsUseRegexpMatchSemantics(t *testing.T) {
 				{"start-anchor-rejects-prefix", `^TOKEN`, "prefix TOKEN", false},
 				{"end-anchor-allows-prefix", `TOKEN$`, "prefix TOKEN", true},
 				{"end-anchor-rejects-suffix", `TOKEN$`, "TOKEN suffix", false},
-				{"replaces-default", `TOKEN`, kind.defaultPrompt, false},
+				{"default-with-custom", `^TOKEN$`, kind.defaultPrompt, kind.additive},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					cfg := ClientConfig{User: "admin", Password: "secret"}

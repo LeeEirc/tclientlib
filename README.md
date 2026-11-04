@@ -140,12 +140,12 @@ err := client.SendCommand(tclientlib.CommandBreak)
 
 ## Login matching
 
-Telnet does not define an authentication protocol. The client therefore treats
+Textual username and password prompts are device-specific. The client treats
 login as a small expect-style state machine instead of searching an entire
 banner for broad success or failure words.
 
-The state machine keeps authentication decisions strict while allowing common
-prompt wording:
+The state machine recognizes common prompt wording while giving explicit
+failure and password-change messages precedence:
 
 - username prompts include forms such as `Login:`, `Enter username:`,
   `Please enter your username:`, and `Login as:`;
@@ -172,21 +172,36 @@ Before matching, login output is normalized into logical terminal lines:
 
 Username, password, shell, failure, password-change, and continuation
 expressions are matched against the current normalized line with surrounding
-whitespace trimmed. A custom expression replaces the built-in expression for
-that event and uses normal `regexp.Match` semantics: an unanchored expression
-can match a substring, while `^` and `$` control its boundaries. For example,
-`READY>` matches `console READY>`; `^READY>$` requires the whole normalized
-line to be `READY>`. No `.*` wrapper or matching-mode option is needed.
+whitespace trimmed. Every custom expression uses normal `regexp.Match`
+semantics: an unanchored expression can match a substring, while `^` and `$`
+control its boundaries. For example, `READY>` matches `console READY>`;
+`^READY>$` requires the whole normalized line to be `READY>` for that expression
+to match. No `.*` wrapper or matching-mode option is needed.
+
+| Fields | Custom rule behavior |
+| --- | --- |
+| `UsernamePrompt`, `PasswordPrompt`, `ShellPrompt` | Supplement the built-in matcher. Either rule can recognize the prompt. |
+| `FailurePrompt`, `PasswordChangePrompt`, `ContinuePrompt` | Replace the built-in expression for that event. |
+
+Supplemental rules allow one platform configuration to recognize both standard
+and device-specific prompts. For example, setting `UsernamePrompt` to
+`^Account:$` still allows the built-in `Login:` prompt, and setting `ShellPrompt`
+to `^READY>$` still allows a built-in prompt such as `router#`. Anchors and case
+flags constrain the custom expression only; these three fields cannot disable
+their built-in matchers. A nil field uses the corresponding built-in behavior.
 
 Built-in rules keep their own anchors and recognition boundaries. `ShellPrompt`
 should describe the final interactive prompt, not a success message in a banner.
-With the built-in rules, text such as `Last login`, `Login successful`, or `成功`
-does not establish successful authentication.
+The built-in shell branch retains its shape, length, and banner checks even
+when `ShellPrompt` is set. With the built-in rules, text such as `Last login`,
+`Login successful`, or `成功` does not establish successful authentication.
 
 For example:
 
 ```go
-config.ShellPrompt = regexp.MustCompile(`^(?:<[^>]+>|router(?:\([^)]*\))?[#>])$`)
+config.UsernamePrompt = regexp.MustCompile(`^Account:$`)
+config.PasswordPrompt = regexp.MustCompile(`Access code:`)
+config.ShellPrompt = regexp.MustCompile(`^READY>$`)
 config.FailurePrompt = regexp.MustCompile(`(?:Login incorrect|Access denied)`)
 config.ContinuePrompt = regexp.MustCompile(`Press Enter to open the console`)
 ```
@@ -196,9 +211,31 @@ EOF, or the login timeout, and retain precedence over interactive prompt actions
 Matching stays within one normalized line; it does not search previous lines or
 the whole login transcript.
 
-Built-in username and password prompts deliberately require prompt punctuation.
-An unusual device that emits a bare prompt without `:` or `：` should provide a
-platform-specific expression rather than making the global fallback ambiguous.
+For compatibility, the built-in credential rules also recognize these short
+prompts without `:` or `：` on a completed `CRLF` or `LF` line:
+
+- usernames: `Login`, `User`, `Username`, `User Name`, `Name`, `用户名`, and `账号`;
+- passwords: `Password`, `Passwd`, `Passcode`, `密码`, and `口令`.
+
+These matches are case-insensitive and must fill the completed normalized line;
+spacing is allowed in forms such as `User Name`, `账 号`, and `密 码`. Longer
+forms such as `Password for admin:` and `Please input your password:` still
+require their colon.
+
+An unfinished built-in credential prompt still requires `:` or `：`. This lets
+a read ending at `User` continue into `Username:`, or `Password` into
+`Password expired policy: disabled`, without prematurely sending credentials.
+For a device that waits at a bare prompt without a newline, configure an
+explicit expression:
+
+```go
+config.PasswordPrompt = regexp.MustCompile(`(?i)^Password$`)
+```
+
+Such a custom rule can match an unfinished candidate using the normal regexp
+semantics; no timer, delay, or matching-mode option is added. See the
+[login stream boundaries](docs/login-stream.md) for the remaining ambiguity of
+delimiter-less prompts.
 
 Login and the interactive session share one buffered reader. The login state
 machine stops as soon as a final shell prompt line is recognized. Unread bytes

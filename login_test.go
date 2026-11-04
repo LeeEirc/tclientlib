@@ -245,10 +245,10 @@ func TestAnchoredCustomPromptMatchesWholeLine(t *testing.T) {
 	}
 }
 
-func TestCustomShellPromptReplacesDefault(t *testing.T) {
+func TestCustomShellPromptSupplementsDefault(t *testing.T) {
 	config, err := prepareConfig(&ClientConfig{
 		Password:    "secret",
-		ShellPrompt: regexp.MustCompile(`READY>`),
+		ShellPrompt: regexp.MustCompile(`^SESSION READY$`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -260,10 +260,10 @@ func TestCustomShellPromptReplacesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != loginPending {
-		t.Fatalf("default shell prompt remained active: %v", result)
+	if result != loginSuccess {
+		t.Fatalf("custom shell prompt disabled the default: %v", result)
 	}
-	result, err = machine.handleLine(io.Discard, []byte("READY>"), nil)
+	result, err = machine.handleLine(io.Discard, []byte("SESSION READY"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
