@@ -171,11 +171,11 @@ func (m *loginMachine) messageResult(line []byte, trace *tracer) loginResult {
 	if len(bytes.TrimSpace(line)) == 0 {
 		return loginPending
 	}
-	if fullLineMatch(m.patterns.passwordChange, line) {
+	if matchPrompt(m.patterns.passwordChange, line) {
 		trace.printf("login password-change message matched phase=%s", m.phase)
 		return loginPasswordChangeRequired
 	}
-	if fullLineMatch(m.patterns.failure, line) {
+	if matchPrompt(m.patterns.failure, line) {
 		trace.printf("login failure message matched phase=%s", m.phase)
 		return loginFailed
 	}
@@ -213,7 +213,7 @@ func (m *loginMachine) handlePartialLine(writer io.Writer, line []byte, trace *t
 		return loginPending, nil
 	}
 
-	if fullLineMatch(m.patterns.passwordChange, line) {
+	if matchPrompt(m.patterns.passwordChange, line) {
 		// Input prompts can be acted on immediately; narrative messages must
 		// wait for a real line ending, EOF, or the overall login timeout.
 		if bytes.HasSuffix(line, []byte(":")) || bytes.HasSuffix(line, []byte("：")) {
@@ -226,7 +226,7 @@ func (m *loginMachine) handlePartialLine(writer io.Writer, line []byte, trace *t
 	// user>" also resembles a shell prompt. Keep the entire text and state
 	// until it becomes a complete diagnostic or a longer, harmless banner.
 	// Apply this before *any* prompt action, including custom prompt rules.
-	if fullLineMatch(m.patterns.failure, line) {
+	if matchPrompt(m.patterns.failure, line) {
 		return loginPending, nil
 	}
 	return m.handlePrompt(writer, line, trace)
@@ -239,7 +239,7 @@ func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer
 	if len(line) == 0 {
 		return loginPending, nil
 	}
-	if fullLineMatch(m.patterns.continuePrompt, line) {
+	if matchPrompt(m.patterns.continuePrompt, line) {
 		if m.continueResponses >= maxContinueResponses {
 			trace.printf("login continue prompt ignored after limit phase=%s", m.phase)
 			return loginPending, nil
@@ -252,7 +252,7 @@ func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer
 		return loginContinueSent, nil
 	}
 
-	if fullLineMatch(m.patterns.username, line) {
+	if matchPrompt(m.patterns.username, line) {
 		if m.phase != loginAwaitPrompt || m.config.User == "" {
 			trace.printf("login username prompt repeated or credential unavailable phase=%s", m.phase)
 			return loginFailed, nil
@@ -265,7 +265,7 @@ func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer
 		return loginCredentialSent, nil
 	}
 
-	if fullLineMatch(m.patterns.password, line) {
+	if matchPrompt(m.patterns.password, line) {
 		if m.phase == loginAwaitResult || m.config.Password == "" {
 			trace.printf("login password prompt repeated or credential unavailable phase=%s", m.phase)
 			return loginFailed, nil
@@ -288,7 +288,7 @@ func (m *loginMachine) handlePrompt(writer io.Writer, line []byte, trace *tracer
 
 func (m *loginMachine) shellPromptMatches(line []byte) bool {
 	if m.patterns.shell != nil {
-		return fullLineMatch(m.patterns.shell, line)
+		return matchPrompt(m.patterns.shell, line)
 	}
 	return defaultShellPromptMatches(line)
 }
@@ -346,17 +346,16 @@ func isBannerLikeShellPrompt(value string) bool {
 	return false
 }
 
-func fullLineMatch(pattern *regexp.Regexp, line []byte) bool {
+func matchPrompt(pattern *regexp.Regexp, line []byte) bool {
 	if pattern == nil {
 		return false
 	}
-	line = bytes.TrimSpace(line)
-	match := pattern.FindIndex(line)
-	return match != nil && match[0] == 0 && match[1] == len(line)
+	return pattern.Match(bytes.TrimSpace(line))
 }
 
 // login returns only a line terminator already consumed while confirming a
-// prompt. All other bytes after the match stay in the shared buffered reader.
+// prompt line. Unread bytes beyond that accepted line stay in the shared reader;
+// a substring match does not split the candidate line at the regexp's match end.
 func login(conn net.Conn, reader *bufio.Reader, writer io.Writer, config clientConfig, trace *tracer) (replay string, err error) {
 	machine := newLoginMachine(config)
 	text := newLoginText(config.maxLoginBuffer)

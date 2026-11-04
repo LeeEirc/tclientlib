@@ -217,9 +217,9 @@ func TestLoginPromptNormalization(t *testing.T) {
 	}
 }
 
-func TestCustomPromptReplacesDefaultAndMatchesWholeLine(t *testing.T) {
+func TestAnchoredCustomPromptMatchesWholeLine(t *testing.T) {
 	config, err := prepareConfig(&ClientConfig{
-		User: "admin", UsernamePrompt: regexp.MustCompile(`login:`),
+		User: "admin", UsernamePrompt: regexp.MustCompile(`^login:$`),
 		LineEnding: LineEndingCRNUL,
 	})
 	if err != nil {
