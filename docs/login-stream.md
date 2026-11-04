@@ -35,7 +35,12 @@ An unfinished password-change input must end in `:` or `：` before being
 classified. `New password:` is rejected without submitting the managed old
 password. Custom `PasswordChangePrompt` and `FailurePrompt` still replace their
 respective defaults; their narrative matches obey the same completion rules.
-Other custom prompts remain full matches against the current normalized line.
+All custom prompt expressions use normal `regexp.Match` semantics on the
+current normalized line, with surrounding whitespace trimmed. An unanchored
+expression may match a substring; use `^` and `$` when a whole-line match is
+required. Expressions never search across logical lines. Built-in expressions
+retain their own anchors, and the default shell-shape and banner checks remain
+in effect when no custom shell expression is configured.
 
 An incomplete line that matches a failure or password-change narrative is
 **pending**, not eligible for another prompt interpretation. For example,
@@ -61,10 +66,13 @@ converted into a sliding suffix that could accidentally look like a prompt.
 
 ## Preserving session data
 
-Only the consumed portion of a chunk is discarded. Bytes after the accepted
-shell prompt remain in the same reader. When CR/LF was consumed to establish a
-line boundary, that one- or two-byte terminator is replayed before the buffered
-session data. There is no second unbounded transcript or replay buffer.
+Only the consumed portion of a chunk is discarded. Unread bytes beyond the
+accepted shell prompt line remain in the same reader. A custom substring match
+accepts the current candidate line as a whole, including any prefix or suffix
+around the regexp match; it does not split the line at the match's end. When
+CR/LF was consumed to establish a line boundary, that one- or two-byte terminator
+is replayed before the buffered session data. There is no second unbounded
+transcript or replay buffer.
 
 For `router#\r\nALARM`, the next `Client.Read` still sees `\r\nALARM`; the accepted
 prompt is not replayed. ANSI formatting already consumed with the prompt is

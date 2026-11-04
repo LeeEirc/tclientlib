@@ -4,6 +4,20 @@ The Go library and `tclient` command share the same version. Entries describe
 user-visible changes; the GitHub Release also lists the commits since the
 previous tag.
 
+## v0.1.1
+
+### Changed
+
+- Custom username, password, shell, failure, password-change, and continuation
+  expressions now use normal `regexp.Match` semantics on the current normalized
+  prompt line. Unanchored expressions can match a substring; add explicit `^`
+  and `$` anchors to retain the whole-line matching required by v0.1.0. No new
+  matching-mode parameter is introduced. Built-in matching boundaries and
+  diagnostic completion/precedence rules are preserved.
+- Callers such as Koko can pass their compiled custom expressions directly,
+  preserving case flags and anchors without an added `.*` wrapper. Existing
+  caller-side validation and legacy-default compatibility remain applicable.
+
 ## v0.1.0
 
 This is the first release with downloadable `tclient` binaries. It also includes

@@ -171,28 +171,41 @@ Before matching, login output is normalized into logical terminal lines:
 - common ANSI CSI and OSC sequences are removed.
 
 Username, password, shell, failure, password-change, and continuation
-expressions are matched against one normalized line. A custom expression
-replaces the built-in expression for that event and must match the complete
-line. `ShellPrompt` represents the final interactive prompt, not a success
-message in a banner. Text such as `Last login`, `Login successful`, or `成功`
-is not considered proof of authentication.
+expressions are matched against the current normalized line with surrounding
+whitespace trimmed. A custom expression replaces the built-in expression for
+that event and uses normal `regexp.Match` semantics: an unanchored expression
+can match a substring, while `^` and `$` control its boundaries. For example,
+`READY>` matches `console READY>`; `^READY>$` requires the whole normalized
+line to be `READY>`. No `.*` wrapper or matching-mode option is needed.
+
+Built-in rules keep their own anchors and recognition boundaries. `ShellPrompt`
+should describe the final interactive prompt, not a success message in a banner.
+With the built-in rules, text such as `Last login`, `Login successful`, or `成功`
+does not establish successful authentication.
 
 For example:
 
 ```go
-config.ShellPrompt = regexp.MustCompile(`(?:<[^>]+>|router(?:\([^)]*\))?[#>])`)
+config.ShellPrompt = regexp.MustCompile(`^(?:<[^>]+>|router(?:\([^)]*\))?[#>])$`)
 config.FailurePrompt = regexp.MustCompile(`(?:Login incorrect|Access denied)`)
 config.ContinuePrompt = regexp.MustCompile(`Press Enter to open the console`)
 ```
+
+Custom failure and password-change narratives still wait for a completed line,
+EOF, or the login timeout, and retain precedence over interactive prompt actions.
+Matching stays within one normalized line; it does not search previous lines or
+the whole login transcript.
 
 Built-in username and password prompts deliberately require prompt punctuation.
 An unusual device that emits a bare prompt without `:` or `：` should provide a
 platform-specific expression rather than making the global fallback ambiguous.
 
 Login and the interactive session share one buffered reader. The login state
-machine stops as soon as the final shell prompt is recognized. Bytes already
-received after that prompt remain buffered for the next `Client.Read`; they are
-not discarded and the matched prompt itself is not replayed.
+machine stops as soon as a final shell prompt line is recognized. Unread bytes
+beyond the accepted line remain buffered for the next `Client.Read`. A substring
+match accepts the current candidate line as a whole; it does not preserve the
+same-line prefix or suffix around the regexp match. The accepted prompt line
+itself is not replayed.
 
 ### Automatic line endings
 

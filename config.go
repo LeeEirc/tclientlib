@@ -33,8 +33,10 @@ type ClientConfig struct {
 	LineEnding LineEnding
 
 	// Prompt expressions replace the built-in expression for that event. They
-	// are matched against one normalized logical line and must match the entire
-	// line. ShellPrompt describes the final interactive prompt, not a success
+	// use regexp.Match semantics on the current normalized logical line with
+	// surrounding whitespace trimmed. Unanchored expressions may match a
+	// substring; use ^ and $ to require a full-line match.
+	// ShellPrompt describes the final interactive prompt, not a success
 	// message in a login banner. ContinuePrompt describes an intermediate prompt
 	// that should receive an Enter key before login continues.
 	UsernamePrompt       *regexp.Regexp

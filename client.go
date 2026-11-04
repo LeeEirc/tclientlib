@@ -64,8 +64,8 @@ func newClientConn(conn net.Conn, config clientConfig) (*Client, error) {
 	}
 
 	// Keep the same buffered reader for login and the interactive session. Login
-	// reads only through the matched prompt, so bytes that arrived in the same
-	// transport read after that prompt remain available to Client.Read.
+	// consumes the accepted prompt line, so unread bytes that arrived in the
+	// same transport read beyond that line remain available to Client.Read.
 	bufferedReader := bufio.NewReaderSize(reader, loginReadBufferSize)
 	client := &Client{
 		conn:      conn,
